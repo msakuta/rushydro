@@ -7,9 +7,11 @@ use eframe::{
 use rand::{thread_rng, Rng};
 
 const SCALE: f32 = 10.;
+const NUM_PARTICLES: usize = 200;
 const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
-const REPULSION_FORCE: f32 = 0.0001;
+const RESTITUTION: f32 = 0.5;
+const REPULSION_FORCE: f32 = 0.005;
 const G: f32 = 0.01;
 
 struct Particle {
@@ -28,16 +30,20 @@ pub struct RusHydroApp {
 impl RusHydroApp {
     pub fn new() -> Self {
         let mut rng = thread_rng();
-        let particles = (0..100)
+        let rect = Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.));
+        let particles = (0..NUM_PARTICLES)
             .map(|_| Particle {
-                pos: Cell::new(vec2(rng.gen_range((-1.)..1.), rng.gen_range((-1.)..1.))),
+                pos: Cell::new(vec2(
+                    rng.gen_range(rect.min.x..rect.max.x),
+                    rng.gen_range(rect.min.y..rect.max.y),
+                )),
                 velo: Cell::new(Vec2::ZERO),
             })
             .collect();
         Self {
             particles,
-            rect: Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.)),
-            restitution: 1.,
+            rect,
+            restitution: RESTITUTION,
             repulsion_force: REPULSION_FORCE,
             gravity: G,
         }
@@ -77,9 +83,12 @@ impl RusHydroApp {
 
     fn reset(&mut self) {
         let mut rng = thread_rng();
-        let particles = (0..100)
+        let particles = (0..NUM_PARTICLES)
             .map(|_| Particle {
-                pos: Cell::new(vec2(rng.gen_range((-1.)..1.), rng.gen_range((-1.)..1.))),
+                pos: Cell::new(vec2(
+                    rng.gen_range(self.rect.min.x..self.rect.max.x),
+                    rng.gen_range(self.rect.min.y..self.rect.max.y),
+                )),
                 velo: Cell::new(Vec2::ZERO),
             })
             .collect();
