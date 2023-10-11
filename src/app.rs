@@ -10,13 +10,7 @@ const SCALE: f32 = 10.;
 const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
 const REPULSION_FORCE: f32 = 0.0001;
-
-// struct Rect {
-//     left: f32,
-//     top: f32,
-//     right: f32,
-//     bottom: f32,
-// }
+const G: f32 = 0.01;
 
 struct Particle {
     pos: Cell<Vec2>,
@@ -109,6 +103,7 @@ impl RusHydroApp {
         for particle in &self.particles {
             let pos = particle.pos.get();
             let mut velo = particle.velo.get();
+            velo.y -= G;
             let newpos = pos + velo;
             let croppos = pos2(
                 newpos.x.min(self.rect.max.x).max(self.rect.min.x),
