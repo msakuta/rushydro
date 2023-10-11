@@ -12,6 +12,7 @@ const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
 const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.005;
+const VISCOSITY: f32 = 0.01;
 const G: f32 = 0.01;
 
 struct Particle {
@@ -24,6 +25,7 @@ pub struct RusHydroApp {
     rect: Rect,
     restitution: f32,
     repulsion_force: f32,
+    viscosity: f32,
     gravity: f32,
 }
 
@@ -45,6 +47,7 @@ impl RusHydroApp {
             rect,
             restitution: RESTITUTION,
             repulsion_force: REPULSION_FORCE,
+            viscosity: VISCOSITY,
             gravity: G,
         }
     }
@@ -104,17 +107,23 @@ impl RusHydroApp {
                 let pos_i = particle_i.pos.get();
                 let pos_j = particle_j.pos.get();
                 let delta = pos_i - pos_j;
+                let velo_i = particle_i.velo.get();
+                let velo_j = particle_j.velo.get();
+                let average_velo = (velo_i + velo_j) * 0.5;
                 let dist2 = delta.length_sq();
                 if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
                     let repulsing = delta / dist2.sqrt();
                     let velo_i = particle_i.velo.get();
-                    particle_i
-                        .velo
-                        .set(velo_i + repulsing * self.repulsion_force);
+                    particle_i.velo.set(
+                        velo_i
+                            + repulsing * self.repulsion_force
+                            + (average_velo - velo_i) * self.viscosity,
+                    );
                     let velo_j = particle_j.velo.get();
-                    particle_j
-                        .velo
-                        .set(velo_j - repulsing * self.repulsion_force);
+                    particle_j.velo.set(
+                        velo_j - repulsing * self.repulsion_force
+                            + (average_velo - velo_j) * self.viscosity,
+                    );
                 }
             }
         }
@@ -165,6 +174,8 @@ impl eframe::App for RusHydroApp {
                     &mut self.repulsion_force,
                     (0.)..=0.01,
                 ));
+                ui.label("Viscosity:");
+                ui.add(egui::widgets::Slider::new(&mut self.viscosity, (0.)..=0.01));
                 ui.label("Gravity:");
                 ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
             });
