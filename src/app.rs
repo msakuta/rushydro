@@ -22,6 +22,7 @@ pub struct RusHydroApp {
     rect: Rect,
     restitution: f32,
     repulsion_force: f32,
+    gravity: f32,
 }
 
 impl RusHydroApp {
@@ -38,6 +39,7 @@ impl RusHydroApp {
             rect: Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.)),
             restitution: 1.,
             repulsion_force: REPULSION_FORCE,
+            gravity: G,
         }
     }
 
@@ -111,7 +113,7 @@ impl RusHydroApp {
         for particle in &self.particles {
             let pos = particle.pos.get();
             let mut velo = particle.velo.get();
-            velo.y -= G;
+            velo.y -= self.gravity;
             let newpos = pos + velo;
             let croppos = pos2(
                 newpos.x.min(self.rect.max.x).max(self.rect.min.x),
@@ -154,6 +156,8 @@ impl eframe::App for RusHydroApp {
                     &mut self.repulsion_force,
                     (0.)..=0.01,
                 ));
+                ui.label("Gravity:");
+                ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
             });
 
         egui::CentralPanel::default()
