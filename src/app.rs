@@ -20,6 +20,8 @@ struct Particle {
 pub struct RusHydroApp {
     particles: Vec<Particle>,
     rect: Rect,
+    restitution: f32,
+    repulsion_force: f32,
 }
 
 impl RusHydroApp {
@@ -34,6 +36,8 @@ impl RusHydroApp {
         Self {
             particles,
             rect: Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.)),
+            restitution: 1.,
+            repulsion_force: REPULSION_FORCE,
         }
     }
 
@@ -93,9 +97,13 @@ impl RusHydroApp {
                 if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
                     let repulsing = delta / dist2.sqrt();
                     let velo_i = particle_i.velo.get();
-                    particle_i.velo.set(velo_i + repulsing * REPULSION_FORCE);
+                    particle_i
+                        .velo
+                        .set(velo_i + repulsing * self.repulsion_force);
                     let velo_j = particle_j.velo.get();
-                    particle_j.velo.set(velo_j - repulsing * REPULSION_FORCE);
+                    particle_j
+                        .velo
+                        .set(velo_j - repulsing * self.repulsion_force);
                 }
             }
         }
@@ -111,16 +119,16 @@ impl RusHydroApp {
             );
             particle.pos.set(croppos.to_vec2());
             if newpos.x < self.rect.min.x && velo.x < 0. {
-                velo.x = -velo.x;
+                velo.x = -velo.x * self.restitution;
             }
             if self.rect.max.x < newpos.x && 0. < velo.x {
-                velo.x = -velo.x;
+                velo.x = -velo.x * self.restitution;
             }
             if newpos.y < self.rect.min.y && velo.y < 0. {
-                velo.y = -velo.y;
+                velo.y = -velo.y * self.restitution;
             }
             if self.rect.max.y < newpos.y && 0. < velo.y {
-                velo.y = -velo.y;
+                velo.y = -velo.y * self.restitution;
             }
             particle.velo.set(velo);
         }
@@ -139,6 +147,13 @@ impl eframe::App for RusHydroApp {
                 if ui.button("Reset").clicked() {
                     self.reset();
                 }
+                ui.label("Restitution:");
+                ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
+                ui.label("Repulsion force:");
+                ui.add(egui::widgets::Slider::new(
+                    &mut self.repulsion_force,
+                    (0.)..=0.01,
+                ));
             });
 
         egui::CentralPanel::default()
