@@ -1,8 +1,9 @@
-use std::cell::Cell;
+use std::{cell::Cell, collections::HashMap};
 
 use eframe::{
     egui::{self, Context, Frame, Ui},
-    epaint::{pos2, vec2, Color32, Pos2, Rect, Vec2},
+    emath::Align2,
+    epaint::{pos2, vec2, Color32, FontId, Pos2, Rect, Vec2},
 };
 use rand::{thread_rng, Rng};
 
@@ -11,6 +12,7 @@ const NUM_PARTICLES: usize = 200;
 const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
 const PARTICLE_RENDER_RADIUS: f32 = 5.;
+const CELL_SIZE: f32 = PARTICLE_RADIUS;
 const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.1;
 const VISCOSITY: f32 = 0.01;
@@ -24,6 +26,7 @@ struct Particle {
 
 pub struct RusHydroApp {
     particles: Vec<Particle>,
+    particle_cache: HashMap<(i32, i32), Vec<usize>>,
     rect: Rect,
     num_particles: usize,
     restitution: f32,
@@ -32,6 +35,9 @@ pub struct RusHydroApp {
     gravity: f32,
     mouse_down: Option<(Pos2, Vec2)>,
     mouse_effect_radius: f32,
+    use_grid_cache: bool,
+    show_grid: bool,
+    show_grid_count: bool,
 }
 
 impl RusHydroApp {
@@ -49,6 +55,7 @@ impl RusHydroApp {
             .collect();
         Self {
             particles,
+            particle_cache: HashMap::new(),
             rect,
             num_particles: NUM_PARTICLES,
             restitution: RESTITUTION,
@@ -57,6 +64,9 @@ impl RusHydroApp {
             gravity: G,
             mouse_down: None,
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
+            use_grid_cache: true,
+            show_grid: true,
+            show_grid_count: false,
         }
     }
 
@@ -88,6 +98,28 @@ impl RusHydroApp {
                     -(scr_pos.y - canvas_offset_y) / SCALE,
                 )
             };
+
+            if self.use_grid_cache && self.show_grid {
+                let font_id = FontId::monospace(16.);
+                for (grid_pos, cell) in &self.particle_cache {
+                    let rect = Rect::from_min_size(
+                        pos2(grid_pos.0 as f32 * CELL_SIZE, grid_pos.1 as f32 * CELL_SIZE),
+                        Vec2::splat(CELL_SIZE),
+                    );
+                    let mut scr_rect = Rect::from_min_max(to_pos2(rect.min), to_pos2(rect.max));
+                    std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+                    painter.rect_stroke(scr_rect, 0., (1., Color32::from_rgb(255, 127, 127)));
+                    if self.show_grid_count {
+                        painter.text(
+                            scr_rect.min,
+                            Align2::LEFT_TOP,
+                            format!("{}", cell.len()),
+                            font_id.clone(),
+                            Color32::BLACK,
+                        );
+                    }
+                }
+            }
 
             let mut scr_rect = Rect::from_min_max(to_pos2(self.rect.min), to_pos2(self.rect.max));
             std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
@@ -136,31 +168,69 @@ impl RusHydroApp {
         self.particles = particles;
     }
 
+    fn update_speed(&self, particle_i: &Particle, particle_j: &Particle) {
+        let pos_i = particle_i.pos.get();
+        let pos_j = particle_j.pos.get();
+        let delta = pos_i - pos_j;
+        let velo_i = particle_i.velo.get();
+        let velo_j = particle_j.velo.get();
+        let average_velo = (velo_i + velo_j) * 0.5;
+        let dist2 = delta.length_sq();
+        if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
+            let dist = dist2.sqrt();
+            let repulsion = delta / dist * (1. - dist / PARTICLE_RADIUS).powf(2.);
+            particle_i.velo.set(
+                velo_i
+                    + repulsion * self.repulsion_force
+                    + (average_velo - velo_i) * self.viscosity,
+            );
+            particle_j.velo.set(
+                velo_j - repulsion * self.repulsion_force
+                    + (average_velo - velo_j) * self.viscosity,
+            );
+        }
+    }
+
     fn update_particles(&mut self) {
-        for (i, particle_i) in self.particles.iter().enumerate() {
-            for (j, particle_j) in self.particles.iter().enumerate() {
-                if i == j {
-                    continue;
+        if self.use_grid_cache {
+            self.particle_cache.clear();
+            for (i, particle_i) in self.particles.iter().enumerate() {
+                let pos = particle_i.pos.get();
+                let grid_pos = (
+                    pos.x.div_euclid(CELL_SIZE) as i32,
+                    pos.y.div_euclid(CELL_SIZE) as i32,
+                );
+                self.particle_cache.entry(grid_pos).or_default().push(i);
+            }
+
+            for (i, particle_i) in self.particles.iter().enumerate() {
+                let pos = particle_i.pos.get();
+                let grid_pos = (
+                    pos.x.div_euclid(CELL_SIZE) as i32,
+                    pos.y.div_euclid(CELL_SIZE) as i32,
+                );
+                for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                    for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                        let Some(cell) = self.particle_cache.get(&(cx, cy)) else {
+                            continue;
+                        };
+                        for &j in cell {
+                            if i == j {
+                                continue;
+                            }
+                            let particle_j = &self.particles[j];
+                            self.update_speed(particle_i, particle_j);
+                        }
+                    }
                 }
-                let pos_i = particle_i.pos.get();
-                let pos_j = particle_j.pos.get();
-                let delta = pos_i - pos_j;
-                let velo_i = particle_i.velo.get();
-                let velo_j = particle_j.velo.get();
-                let average_velo = (velo_i + velo_j) * 0.5;
-                let dist2 = delta.length_sq();
-                if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
-                    let dist = dist2.sqrt();
-                    let repulsion = delta / dist * (1. - dist / PARTICLE_RADIUS).powf(2.);
-                    particle_i.velo.set(
-                        velo_i
-                            + repulsion * self.repulsion_force
-                            + (average_velo - velo_i) * self.viscosity,
-                    );
-                    particle_j.velo.set(
-                        velo_j - repulsion * self.repulsion_force
-                            + (average_velo - velo_j) * self.viscosity,
-                    );
+            }
+        } else {
+            for (i, particle_i) in self.particles.iter().enumerate() {
+                for (j, particle_j) in self.particles.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    self.update_speed(particle_i, particle_j);
                 }
             }
         }
@@ -217,7 +287,7 @@ impl eframe::App for RusHydroApp {
                 ui.label("Num particles (needs reset):");
                 ui.add(egui::widgets::Slider::new(
                     &mut self.num_particles,
-                    1..=1000,
+                    1..=5000,
                 ));
                 ui.label("Width:");
                 if ui
@@ -255,6 +325,9 @@ impl eframe::App for RusHydroApp {
                     &mut self.mouse_effect_radius,
                     (0.)..=10.,
                 ));
+                ui.checkbox(&mut self.use_grid_cache, "Use grid cache");
+                ui.checkbox(&mut self.show_grid, "Show grid");
+                ui.checkbox(&mut self.show_grid_count, "Show grid count");
             });
 
         egui::CentralPanel::default()
