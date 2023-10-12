@@ -14,6 +14,7 @@ const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.1;
 const VISCOSITY: f32 = 0.01;
 const G: f32 = 0.01;
+const MOUSE_EFFECT_RADIUS: f32 = 5.;
 
 struct Particle {
     pos: Cell<Vec2>,
@@ -28,6 +29,8 @@ pub struct RusHydroApp {
     repulsion_force: f32,
     viscosity: f32,
     gravity: f32,
+    mouse_down: Option<(Pos2, Vec2)>,
+    mouse_effect_radius: f32,
 }
 
 impl RusHydroApp {
@@ -51,13 +54,15 @@ impl RusHydroApp {
             repulsion_force: REPULSION_FORCE,
             viscosity: VISCOSITY,
             gravity: G,
+            mouse_down: None,
+            mouse_effect_radius: MOUSE_EFFECT_RADIUS,
         }
     }
 
     fn paint_canvas(&mut self, ui: &mut Ui) {
         Frame::canvas(ui.style()).show(ui, |ui| {
             let (response, painter) =
-                ui.allocate_painter(ui.available_size(), egui::Sense::click());
+                ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
 
             let to_screen = egui::emath::RectTransform::from_to(
                 Rect::from_min_size(Pos2::ZERO, response.rect.size()),
@@ -74,6 +79,31 @@ impl RusHydroApp {
                     canvas_offset_y - pos.y as f32 * SCALE,
                 ))
             };
+
+            let from_pos2 = |pos: Pos2| {
+                let scr_pos = from_screen.transform_pos(pos);
+                pos2(
+                    (scr_pos.x - canvas_offset_x) / SCALE,
+                    -(scr_pos.y - canvas_offset_y) / SCALE,
+                )
+            };
+
+            if response.is_pointer_button_down_on() {
+                if let Some(ptr) = response.interact_pointer_pos() {
+                    let pos = from_pos2(ptr);
+                    let delta = self
+                        .mouse_down
+                        .map(|(prev_pos, _)| pos - prev_pos)
+                        .unwrap_or(Vec2::ZERO);
+                    self.mouse_down = Some((pos, delta));
+
+                    painter.circle(to_pos2(pos), 5., Color32::RED, (1., Color32::BLACK));
+                } else {
+                    self.mouse_down = None;
+                }
+            } else {
+                self.mouse_down = None;
+            }
 
             for particle in &self.particles {
                 painter.circle(
@@ -116,17 +146,25 @@ impl RusHydroApp {
                 if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
                     let dist = dist2.sqrt();
                     let repulsion = delta / dist * (1. - dist / PARTICLE_RADIUS).powf(2.);
-                    let velo_i = particle_i.velo.get();
                     particle_i.velo.set(
                         velo_i
                             + repulsion * self.repulsion_force
                             + (average_velo - velo_i) * self.viscosity,
                     );
-                    let velo_j = particle_j.velo.get();
                     particle_j.velo.set(
                         velo_j - repulsion * self.repulsion_force
                             + (average_velo - velo_j) * self.viscosity,
                     );
+                }
+            }
+        }
+
+        if let Some((mouse_pos, delta)) = self.mouse_down {
+            for particle_i in self.particles.iter() {
+                let pos_i = particle_i.pos.get();
+                let dist2 = (pos_i - mouse_pos.to_vec2()).length_sq();
+                if dist2 < self.mouse_effect_radius.powi(2) {
+                    particle_i.velo.set(delta);
                 }
             }
         }
@@ -186,6 +224,11 @@ impl eframe::App for RusHydroApp {
                 ui.add(egui::widgets::Slider::new(&mut self.viscosity, (0.)..=0.01));
                 ui.label("Gravity:");
                 ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
+                ui.label("Mouse effect radius:");
+                ui.add(egui::widgets::Slider::new(
+                    &mut self.mouse_effect_radius,
+                    (0.)..=10.,
+                ));
             });
 
         egui::CentralPanel::default()
