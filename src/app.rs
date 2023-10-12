@@ -23,6 +23,7 @@ struct Particle {
 pub struct RusHydroApp {
     particles: Vec<Particle>,
     rect: Rect,
+    num_particles: usize,
     restitution: f32,
     repulsion_force: f32,
     viscosity: f32,
@@ -45,6 +46,7 @@ impl RusHydroApp {
         Self {
             particles,
             rect,
+            num_particles: NUM_PARTICLES,
             restitution: RESTITUTION,
             repulsion_force: REPULSION_FORCE,
             viscosity: VISCOSITY,
@@ -86,7 +88,7 @@ impl RusHydroApp {
 
     fn reset(&mut self) {
         let mut rng = thread_rng();
-        let particles = (0..NUM_PARTICLES)
+        let particles = (0..self.num_particles)
             .map(|_| Particle {
                 pos: Cell::new(vec2(
                     rng.gen_range(self.rect.min.x..self.rect.max.x),
@@ -168,6 +170,11 @@ impl eframe::App for RusHydroApp {
                 if ui.button("Reset").clicked() {
                     self.reset();
                 }
+                ui.label("Num particles (needs reset):");
+                ui.add(egui::widgets::Slider::new(
+                    &mut self.num_particles,
+                    1..=1000,
+                ));
                 ui.label("Restitution:");
                 ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
                 ui.label("Repulsion force:");
