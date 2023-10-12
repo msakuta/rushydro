@@ -38,6 +38,7 @@ pub struct RusHydroApp {
     use_grid_cache: bool,
     show_grid: bool,
     show_grid_count: bool,
+    color_by_speed: bool,
 }
 
 impl RusHydroApp {
@@ -67,6 +68,7 @@ impl RusHydroApp {
             use_grid_cache: true,
             show_grid: true,
             show_grid_count: false,
+            color_by_speed: true,
         }
     }
 
@@ -144,10 +146,17 @@ impl RusHydroApp {
             }
 
             for particle in &self.particles {
+                let color = if self.color_by_speed {
+                    let speed = particle.velo.get().length().min(1.);
+                    let speed_u8 = (speed * 255.) as u8;
+                    Color32::from_rgb(speed_u8, 0, 255 - speed_u8)
+                } else {
+                    Color32::BLUE
+                };
                 painter.circle(
                     to_pos2(particle.pos.get().to_pos2()),
                     PARTICLE_RENDER_RADIUS,
-                    Color32::BLUE,
+                    color,
                     (1., Color32::BLACK),
                 );
             }
@@ -328,6 +337,7 @@ impl eframe::App for RusHydroApp {
                 ui.checkbox(&mut self.use_grid_cache, "Use grid cache");
                 ui.checkbox(&mut self.show_grid, "Show grid");
                 ui.checkbox(&mut self.show_grid_count, "Show grid count");
+                ui.checkbox(&mut self.color_by_speed, "Color by speed");
             });
 
         egui::CentralPanel::default()
