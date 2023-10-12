@@ -10,6 +10,7 @@ const SCALE: f32 = 10.;
 const NUM_PARTICLES: usize = 200;
 const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
+const PARTICLE_RENDER_RADIUS: f32 = 5.;
 const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.1;
 const VISCOSITY: f32 = 0.01;
@@ -88,6 +89,11 @@ impl RusHydroApp {
                 )
             };
 
+            let mut scr_rect = Rect::from_min_max(to_pos2(self.rect.min), to_pos2(self.rect.max));
+            std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+            scr_rect = scr_rect.expand(PARTICLE_RENDER_RADIUS);
+            painter.rect_stroke(scr_rect, 0., (1., Color32::BLACK));
+
             if response.is_pointer_button_down_on() {
                 if let Some(ptr) = response.interact_pointer_pos() {
                     let pos = from_pos2(ptr);
@@ -108,7 +114,7 @@ impl RusHydroApp {
             for particle in &self.particles {
                 painter.circle(
                     to_pos2(particle.pos.get().to_pos2()),
-                    5.,
+                    PARTICLE_RENDER_RADIUS,
                     Color32::BLUE,
                     (1., Color32::BLACK),
                 );
@@ -213,6 +219,26 @@ impl eframe::App for RusHydroApp {
                     &mut self.num_particles,
                     1..=1000,
                 ));
+                ui.label("Width:");
+                if ui
+                    .add(egui::widgets::Slider::new(
+                        &mut self.rect.max.x,
+                        1.0..=100.0,
+                    ))
+                    .changed()
+                {
+                    self.rect.min.x = -self.rect.max.x;
+                };
+                ui.label("Height:");
+                if ui
+                    .add(egui::widgets::Slider::new(
+                        &mut self.rect.max.y,
+                        1.0..=100.0,
+                    ))
+                    .changed()
+                {
+                    self.rect.min.y = -self.rect.max.y;
+                };
                 ui.label("Restitution:");
                 ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
                 ui.label("Repulsion force:");
