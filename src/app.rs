@@ -31,6 +31,15 @@ enum NeighborMode {
     SortMap,
 }
 
+enum NeighborPayload {
+    BruteForce,
+    HashMap(HashMap<(i32, i32), Vec<usize>>),
+    SortMap {
+        hash_table: Vec<HashEntry>,
+        start_offsets: Vec<usize>,
+    },
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 struct HashEntry {
     particle_idx: usize,
@@ -43,20 +52,22 @@ impl std::fmt::Display for HashEntry {
     }
 }
 
+struct Params {
+    repulsion_force: f32,
+    viscosity: f32,
+}
+
 pub struct RusHydroApp {
     particles: Vec<Particle>,
-    particle_cache: HashMap<(i32, i32), Vec<usize>>,
-    particle_hash: Vec<HashEntry>,
-    start_offsets: Vec<usize>,
     rect: Rect,
     num_particles: usize,
     restitution: f32,
-    repulsion_force: f32,
-    viscosity: f32,
+    params: Params,
     gravity: f32,
     mouse_down: Option<(Pos2, Vec2)>,
     mouse_effect_radius: f32,
     neighbor_mode: NeighborMode,
+    neighbor_payload: NeighborPayload,
     show_grid: bool,
     show_grid_count: bool,
     color_by_speed: bool,
@@ -77,18 +88,18 @@ impl RusHydroApp {
             .collect();
         Self {
             particles,
-            particle_cache: HashMap::new(),
-            particle_hash: vec![],
-            start_offsets: vec![],
             rect,
             num_particles: NUM_PARTICLES,
             restitution: RESTITUTION,
-            repulsion_force: REPULSION_FORCE,
-            viscosity: VISCOSITY,
+            params: Params {
+                repulsion_force: REPULSION_FORCE,
+                viscosity: VISCOSITY,
+            },
             gravity: G,
             mouse_down: None,
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
             neighbor_mode: NeighborMode::HashMap,
+            neighbor_payload: NeighborPayload::BruteForce,
             show_grid: true,
             show_grid_count: false,
             color_by_speed: true,
@@ -124,11 +135,11 @@ impl RusHydroApp {
                 )
             };
 
-            match self.neighbor_mode {
-                NeighborMode::HashMap => {
+            match self.neighbor_payload {
+                NeighborPayload::HashMap(ref hash_map) => {
                     if self.show_grid {
                         let font_id = FontId::monospace(16.);
-                        for (grid_pos, cell) in &self.particle_cache {
+                        for (grid_pos, cell) in hash_map {
                             let rect = Rect::from_min_size(
                                 pos2(grid_pos.0 as f32 * CELL_SIZE, grid_pos.1 as f32 * CELL_SIZE),
                                 Vec2::splat(CELL_SIZE),
@@ -153,7 +164,7 @@ impl RusHydroApp {
                         }
                     }
                 }
-                NeighborMode::SortMap => {
+                NeighborPayload::SortMap { .. } => {
                     if self.show_grid {
                         for particle in &self.particles {
                             let pos = particle.pos.get();
@@ -231,9 +242,11 @@ impl RusHydroApp {
             })
             .collect();
         self.particles = particles;
+        // Force reinitialization of neighbor caches
+        self.neighbor_payload = NeighborPayload::BruteForce;
     }
 
-    fn update_speed(&self, particle_i: &Particle, particle_j: &Particle) {
+    fn update_speed(particle_i: &Particle, particle_j: &Particle, params: &Params) {
         let pos_i = particle_i.pos.get();
         let pos_j = particle_j.pos.get();
         let delta = pos_i - pos_j;
@@ -246,37 +259,55 @@ impl RusHydroApp {
             let repulsion = delta / dist * (1. - dist / PARTICLE_RADIUS).powf(2.);
             particle_i.velo.set(
                 velo_i
-                    + repulsion * self.repulsion_force
-                    + (average_velo - velo_i) * self.viscosity,
+                    + repulsion * params.repulsion_force
+                    + (average_velo - velo_i) * params.viscosity,
             );
             particle_j.velo.set(
-                velo_j - repulsion * self.repulsion_force
-                    + (average_velo - velo_j) * self.viscosity,
+                velo_j - repulsion * params.repulsion_force
+                    + (average_velo - velo_j) * params.viscosity,
             );
         }
     }
 
     fn update_particles(&mut self) {
         match self.neighbor_mode {
-            NeighborMode::BruteForce => {
+            NeighborMode::BruteForce => self.neighbor_payload = NeighborPayload::BruteForce,
+            NeighborMode::HashMap => {
+                if !matches!(self.neighbor_payload, NeighborPayload::HashMap(_)) {
+                    // We keep the hash map although we rebuild it every frame in the hope that some of the heap memory can be reused.
+                    self.neighbor_payload = NeighborPayload::HashMap(HashMap::new());
+                }
+            }
+            NeighborMode::SortMap => {
+                if !matches!(self.neighbor_payload, NeighborPayload::SortMap { .. }) {
+                    self.neighbor_payload = NeighborPayload::SortMap {
+                        hash_table: vec![HashEntry::default(); self.particles.len()],
+                        start_offsets: vec![usize::MAX; self.particles.len()],
+                    };
+                }
+            }
+        }
+
+        match self.neighbor_payload {
+            NeighborPayload::BruteForce => {
                 for (i, particle_i) in self.particles.iter().enumerate() {
                     for (j, particle_j) in self.particles.iter().enumerate() {
                         if i == j {
                             continue;
                         }
-                        self.update_speed(particle_i, particle_j);
+                        Self::update_speed(particle_i, particle_j, &self.params);
                     }
                 }
             }
-            NeighborMode::HashMap => {
-                self.particle_cache.clear();
+            NeighborPayload::HashMap(ref mut hash_map) => {
+                hash_map.clear();
                 for (i, particle_i) in self.particles.iter().enumerate() {
                     let pos = particle_i.pos.get();
                     let grid_pos = (
                         pos.x.div_euclid(CELL_SIZE) as i32,
                         pos.y.div_euclid(CELL_SIZE) as i32,
                     );
-                    self.particle_cache.entry(grid_pos).or_default().push(i);
+                    hash_map.entry(grid_pos).or_default().push(i);
                 }
 
                 for (i, particle_i) in self.particles.iter().enumerate() {
@@ -287,7 +318,7 @@ impl RusHydroApp {
                     );
                     for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
                         for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
-                            let Some(cell) = self.particle_cache.get(&(cx, cy)) else {
+                            let Some(cell) = hash_map.get(&(cx, cy)) else {
                                 continue;
                             };
                             for &j in cell {
@@ -295,20 +326,20 @@ impl RusHydroApp {
                                     continue;
                                 }
                                 let particle_j = &self.particles[j];
-                                self.update_speed(particle_i, particle_j);
+                                Self::update_speed(particle_i, particle_j, &self.params);
                             }
                         }
                     }
                 }
             }
-            NeighborMode::SortMap => {
+            NeighborPayload::SortMap {
+                ref mut hash_table,
+                ref mut start_offsets,
+            } => {
                 let hasher = |grid_pos: (i32, i32)| -> usize {
                     (grid_pos.0 + grid_pos.1 * 32121).rem_euclid(self.particles.len() as i32)
                         as usize
                 };
-                self.particle_hash
-                    .resize(self.particles.len(), HashEntry::default());
-                self.start_offsets.resize(self.particles.len(), usize::MAX);
                 for (i, particle_i) in self.particles.iter().enumerate() {
                     let pos = particle_i.pos.get();
                     let grid_pos = (
@@ -319,20 +350,19 @@ impl RusHydroApp {
                     // grid_pos.hash(&mut hasher);
                     // let grid_hash: usize = hasher.into() % self.particle_hash.len();
                     let cell_hash = hasher(grid_pos);
-                    self.particle_hash[i] = HashEntry {
+                    hash_table[i] = HashEntry {
                         particle_idx: i,
                         cell_hash,
                     };
                 }
-                self.particle_hash.sort_by_key(|entry| entry.cell_hash);
+                hash_table.sort_by_key(|entry| entry.cell_hash);
                 for i in 0..self.particles.len() {
-                    let first = self
-                        .particle_hash
+                    let first = hash_table
                         .iter()
                         .enumerate()
                         .find(|(_, p)| p.cell_hash == i);
                     if let Some(first) = first {
-                        self.start_offsets[i] = first.0;
+                        start_offsets[i] = first.0;
                     }
                 }
 
@@ -345,13 +375,13 @@ impl RusHydroApp {
                     for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
                         for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
                             let cell_hash = hasher((cx, cy));
-                            let Some(&cell_start) = self.start_offsets.get(cell_hash) else {
+                            let Some(&cell_start) = start_offsets.get(cell_hash) else {
                                 continue;
                             };
                             if cell_start == usize::MAX {
                                 continue;
                             }
-                            for entry in &self.particle_hash[cell_start..] {
+                            for entry in &hash_table[cell_start..] {
                                 if i == entry.particle_idx {
                                     continue;
                                 }
@@ -359,7 +389,7 @@ impl RusHydroApp {
                                     break;
                                 }
                                 let particle_j = &self.particles[entry.particle_idx];
-                                self.update_speed(particle_i, particle_j);
+                                Self::update_speed(particle_i, particle_j, &self.params);
                             }
                         }
                     }
@@ -459,11 +489,14 @@ impl eframe::App for RusHydroApp {
                 ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
                 ui.label("Repulsion force:");
                 ui.add(egui::widgets::Slider::new(
-                    &mut self.repulsion_force,
+                    &mut self.params.repulsion_force,
                     (0.)..=1.0,
                 ));
                 ui.label("Viscosity:");
-                ui.add(egui::widgets::Slider::new(&mut self.viscosity, (0.)..=0.01));
+                ui.add(egui::widgets::Slider::new(
+                    &mut self.params.viscosity,
+                    (0.)..=0.01,
+                ));
                 ui.label("Gravity:");
                 ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
                 ui.label("Mouse effect radius:");
