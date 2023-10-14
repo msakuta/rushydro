@@ -24,9 +24,30 @@ struct Particle {
     velo: Cell<Vec2>,
 }
 
+#[derive(PartialEq, Eq, Debug)]
+enum NeighborMode {
+    BruteForce,
+    HashMap,
+    SortMap,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct HashEntry {
+    particle_idx: usize,
+    cell_hash: usize,
+}
+
+impl std::fmt::Display for HashEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{{}, {}}}", self.particle_idx, self.cell_hash)
+    }
+}
+
 pub struct RusHydroApp {
     particles: Vec<Particle>,
     particle_cache: HashMap<(i32, i32), Vec<usize>>,
+    particle_hash: Vec<HashEntry>,
+    start_offsets: Vec<usize>,
     rect: Rect,
     num_particles: usize,
     restitution: f32,
@@ -35,7 +56,7 @@ pub struct RusHydroApp {
     gravity: f32,
     mouse_down: Option<(Pos2, Vec2)>,
     mouse_effect_radius: f32,
-    use_grid_cache: bool,
+    neighbor_mode: NeighborMode,
     show_grid: bool,
     show_grid_count: bool,
     color_by_speed: bool,
@@ -57,6 +78,8 @@ impl RusHydroApp {
         Self {
             particles,
             particle_cache: HashMap::new(),
+            particle_hash: vec![],
+            start_offsets: vec![],
             rect,
             num_particles: NUM_PARTICLES,
             restitution: RESTITUTION,
@@ -65,7 +88,7 @@ impl RusHydroApp {
             gravity: G,
             mouse_down: None,
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
-            use_grid_cache: true,
+            neighbor_mode: NeighborMode::HashMap,
             show_grid: true,
             show_grid_count: false,
             color_by_speed: true,
@@ -101,26 +124,59 @@ impl RusHydroApp {
                 )
             };
 
-            if self.use_grid_cache && self.show_grid {
-                let font_id = FontId::monospace(16.);
-                for (grid_pos, cell) in &self.particle_cache {
-                    let rect = Rect::from_min_size(
-                        pos2(grid_pos.0 as f32 * CELL_SIZE, grid_pos.1 as f32 * CELL_SIZE),
-                        Vec2::splat(CELL_SIZE),
-                    );
-                    let mut scr_rect = Rect::from_min_max(to_pos2(rect.min), to_pos2(rect.max));
-                    std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
-                    painter.rect_stroke(scr_rect, 0., (1., Color32::from_rgb(255, 127, 127)));
-                    if self.show_grid_count {
-                        painter.text(
-                            scr_rect.min,
-                            Align2::LEFT_TOP,
-                            format!("{}", cell.len()),
-                            font_id.clone(),
-                            Color32::BLACK,
-                        );
+            match self.neighbor_mode {
+                NeighborMode::HashMap => {
+                    if self.show_grid {
+                        let font_id = FontId::monospace(16.);
+                        for (grid_pos, cell) in &self.particle_cache {
+                            let rect = Rect::from_min_size(
+                                pos2(grid_pos.0 as f32 * CELL_SIZE, grid_pos.1 as f32 * CELL_SIZE),
+                                Vec2::splat(CELL_SIZE),
+                            );
+                            let mut scr_rect =
+                                Rect::from_min_max(to_pos2(rect.min), to_pos2(rect.max));
+                            std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+                            painter.rect_stroke(
+                                scr_rect,
+                                0.,
+                                (1., Color32::from_rgb(255, 127, 127)),
+                            );
+                            if self.show_grid_count {
+                                painter.text(
+                                    scr_rect.min,
+                                    Align2::LEFT_TOP,
+                                    format!("{}", cell.len()),
+                                    font_id.clone(),
+                                    Color32::BLACK,
+                                );
+                            }
+                        }
                     }
                 }
+                NeighborMode::SortMap => {
+                    if self.show_grid {
+                        for particle in &self.particles {
+                            let pos = particle.pos.get();
+                            let grid_pos = (
+                                pos.x.div_euclid(CELL_SIZE) as i32,
+                                pos.y.div_euclid(CELL_SIZE) as i32,
+                            );
+                            let rect = Rect::from_min_size(
+                                pos2(grid_pos.0 as f32 * CELL_SIZE, grid_pos.1 as f32 * CELL_SIZE),
+                                Vec2::splat(CELL_SIZE),
+                            );
+                            let mut scr_rect =
+                                Rect::from_min_max(to_pos2(rect.min), to_pos2(rect.max));
+                            std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+                            painter.rect_stroke(
+                                scr_rect,
+                                0.,
+                                (1., Color32::from_rgb(255, 127, 127)),
+                            );
+                        }
+                    }
+                }
+                _ => {}
             }
 
             let mut scr_rect = Rect::from_min_max(to_pos2(self.rect.min), to_pos2(self.rect.max));
@@ -201,46 +257,127 @@ impl RusHydroApp {
     }
 
     fn update_particles(&mut self) {
-        if self.use_grid_cache {
-            self.particle_cache.clear();
-            for (i, particle_i) in self.particles.iter().enumerate() {
-                let pos = particle_i.pos.get();
-                let grid_pos = (
-                    pos.x.div_euclid(CELL_SIZE) as i32,
-                    pos.y.div_euclid(CELL_SIZE) as i32,
-                );
-                self.particle_cache.entry(grid_pos).or_default().push(i);
-            }
-
-            for (i, particle_i) in self.particles.iter().enumerate() {
-                let pos = particle_i.pos.get();
-                let grid_pos = (
-                    pos.x.div_euclid(CELL_SIZE) as i32,
-                    pos.y.div_euclid(CELL_SIZE) as i32,
-                );
-                for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
-                    for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
-                        let Some(cell) = self.particle_cache.get(&(cx, cy)) else {
+        match self.neighbor_mode {
+            NeighborMode::BruteForce => {
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    for (j, particle_j) in self.particles.iter().enumerate() {
+                        if i == j {
                             continue;
-                        };
-                        for &j in cell {
-                            if i == j {
+                        }
+                        self.update_speed(particle_i, particle_j);
+                    }
+                }
+            }
+            NeighborMode::HashMap => {
+                self.particle_cache.clear();
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    let pos = particle_i.pos.get();
+                    let grid_pos = (
+                        pos.x.div_euclid(CELL_SIZE) as i32,
+                        pos.y.div_euclid(CELL_SIZE) as i32,
+                    );
+                    self.particle_cache.entry(grid_pos).or_default().push(i);
+                }
+
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    let pos = particle_i.pos.get();
+                    let grid_pos = (
+                        pos.x.div_euclid(CELL_SIZE) as i32,
+                        pos.y.div_euclid(CELL_SIZE) as i32,
+                    );
+                    for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                        for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                            let Some(cell) = self.particle_cache.get(&(cx, cy)) else {
                                 continue;
+                            };
+                            for &j in cell {
+                                if i == j {
+                                    continue;
+                                }
+                                let particle_j = &self.particles[j];
+                                self.update_speed(particle_i, particle_j);
                             }
-                            let particle_j = &self.particles[j];
-                            self.update_speed(particle_i, particle_j);
                         }
                     }
                 }
             }
-        } else {
-            for (i, particle_i) in self.particles.iter().enumerate() {
-                for (j, particle_j) in self.particles.iter().enumerate() {
-                    if i == j {
-                        continue;
-                    }
-                    self.update_speed(particle_i, particle_j);
+            NeighborMode::SortMap => {
+                let hasher = |grid_pos: (i32, i32)| -> usize {
+                    (grid_pos.0 + grid_pos.1 * 32121).rem_euclid(self.particles.len() as i32)
+                        as usize
+                };
+                self.particle_hash
+                    .resize(self.particles.len(), HashEntry::default());
+                self.start_offsets.resize(self.particles.len(), usize::MAX);
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    let pos = particle_i.pos.get();
+                    let grid_pos = (
+                        pos.x.div_euclid(CELL_SIZE) as i32,
+                        pos.y.div_euclid(CELL_SIZE) as i32,
+                    );
+                    // let mut hasher = std::hash::SipHasher::new();
+                    // grid_pos.hash(&mut hasher);
+                    // let grid_hash: usize = hasher.into() % self.particle_hash.len();
+                    let cell_hash = hasher(grid_pos);
+                    self.particle_hash[i] = HashEntry {
+                        particle_idx: i,
+                        cell_hash,
+                    };
                 }
+                self.particle_hash.sort_by_key(|entry| entry.cell_hash);
+                for i in 0..self.particles.len() {
+                    let first = self
+                        .particle_hash
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| p.cell_hash == i);
+                    if let Some(first) = first {
+                        self.start_offsets[i] = first.0;
+                    }
+                }
+
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    let pos = particle_i.pos.get();
+                    let grid_pos = (
+                        pos.x.div_euclid(CELL_SIZE) as i32,
+                        pos.y.div_euclid(CELL_SIZE) as i32,
+                    );
+                    for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                        for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                            let cell_hash = hasher((cx, cy));
+                            let Some(&cell_start) = self.start_offsets.get(cell_hash) else {
+                                continue;
+                            };
+                            if cell_start == usize::MAX {
+                                continue;
+                            }
+                            for entry in &self.particle_hash[cell_start..] {
+                                if i == entry.particle_idx {
+                                    continue;
+                                }
+                                if entry.cell_hash != cell_hash {
+                                    break;
+                                }
+                                let particle_j = &self.particles[entry.particle_idx];
+                                self.update_speed(particle_i, particle_j);
+                            }
+                        }
+                    }
+                }
+
+                // static INIT: AtomicBool = AtomicBool::new(false);
+                // if !INIT.load(std::sync::atomic::Ordering::Relaxed) {
+                //     println!("particle_hash:");
+                //     for h in &self.particle_hash {
+                //         println!("  {}", h);
+                //     }
+                //     INIT.store(true, std::sync::atomic::Ordering::Relaxed);
+                //     println!("start_offsets:");
+                //     for so in &self.start_offsets {
+                //         println!("  {}", so);
+                //     }
+                //     INIT.store(true, std::sync::atomic::Ordering::Relaxed);
+                // }
             }
         }
 
@@ -296,7 +433,7 @@ impl eframe::App for RusHydroApp {
                 ui.label("Num particles (needs reset):");
                 ui.add(egui::widgets::Slider::new(
                     &mut self.num_particles,
-                    1..=5000,
+                    1..=15000,
                 ));
                 ui.label("Width:");
                 if ui
@@ -334,7 +471,16 @@ impl eframe::App for RusHydroApp {
                     &mut self.mouse_effect_radius,
                     (0.)..=10.,
                 ));
-                ui.checkbox(&mut self.use_grid_cache, "Use grid cache");
+                ui.group(|ui| {
+                    ui.label("Neighbor search:");
+                    ui.radio_value(
+                        &mut self.neighbor_mode,
+                        NeighborMode::BruteForce,
+                        "Brute force",
+                    );
+                    ui.radio_value(&mut self.neighbor_mode, NeighborMode::HashMap, "Hash map");
+                    ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
+                });
                 ui.checkbox(&mut self.show_grid, "Show grid");
                 ui.checkbox(&mut self.show_grid_count, "Show grid count");
                 ui.checkbox(&mut self.color_by_speed, "Color by speed");
