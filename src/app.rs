@@ -11,11 +11,12 @@ const SCALE: f32 = 10.;
 const NUM_PARTICLES: usize = 200;
 const PARTICLE_RADIUS: f32 = 2.;
 const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
-const PARTICLE_RENDER_RADIUS: f32 = 5.;
+const PARTICLE_RENDER_RADIUS: f32 = 3.;
 const CELL_SIZE: f32 = PARTICLE_RADIUS;
 const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.1;
 const VISCOSITY: f32 = 0.01;
+const SURFACE_TENSION: f32 = 0.05;
 const G: f32 = 0.01;
 const MOUSE_EFFECT_RADIUS: f32 = 5.;
 
@@ -55,6 +56,7 @@ impl std::fmt::Display for HashEntry {
 struct Params {
     repulsion_force: f32,
     viscosity: f32,
+    surface_tension: f32,
 }
 
 pub struct RusHydroApp {
@@ -94,6 +96,7 @@ impl RusHydroApp {
             params: Params {
                 repulsion_force: REPULSION_FORCE,
                 viscosity: VISCOSITY,
+                surface_tension: SURFACE_TENSION,
             },
             gravity: G,
             mouse_down: None,
@@ -220,11 +223,10 @@ impl RusHydroApp {
                 } else {
                     Color32::BLUE
                 };
-                painter.circle(
+                painter.circle_filled(
                     to_pos2(particle.pos.get().to_pos2()),
                     PARTICLE_RENDER_RADIUS,
                     color,
-                    (1., Color32::BLACK),
                 );
             }
         });
@@ -256,7 +258,8 @@ impl RusHydroApp {
         let dist2 = delta.length_sq();
         if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
             let dist = dist2.sqrt();
-            let repulsion = delta / dist * (1. - dist / PARTICLE_RADIUS).powf(2.);
+            let repulsion =
+                delta / dist * ((1. - dist / PARTICLE_RADIUS).powf(2.) - params.surface_tension);
             particle_i.velo.set(
                 velo_i
                     + repulsion * params.repulsion_force
@@ -496,6 +499,11 @@ impl eframe::App for RusHydroApp {
                 ui.add(egui::widgets::Slider::new(
                     &mut self.params.viscosity,
                     (0.)..=0.01,
+                ));
+                ui.label("Surface tension:");
+                ui.add(egui::widgets::Slider::new(
+                    &mut self.params.surface_tension,
+                    (0.)..=0.5,
                 ));
                 ui.label("Gravity:");
                 ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
