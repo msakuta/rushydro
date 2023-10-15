@@ -1,11 +1,20 @@
-use std::{cell::Cell, collections::HashMap};
+use std::{
+    cell::Cell,
+    collections::{HashMap, VecDeque},
+};
 
 use eframe::{
-    egui::{self, Context, Frame, Ui},
+    egui::{
+        self,
+        plot::{Legend, Line, Plot, PlotPoints},
+        Context, Frame, Ui,
+    },
     emath::Align2,
     epaint::{pos2, vec2, Color32, FontId, Pos2, Rect, Vec2},
 };
 use rand::{thread_rng, Rng};
+
+use crate::measure_time;
 
 const SCALE: f32 = 10.;
 const NUM_PARTICLES: usize = 200;
@@ -19,6 +28,7 @@ const VISCOSITY: f32 = 0.01;
 const SURFACE_TENSION: f32 = 0.05;
 const G: f32 = 0.01;
 const MOUSE_EFFECT_RADIUS: f32 = 5.;
+const MAX_HISTORY: usize = 1000;
 
 struct Particle {
     pos: Cell<Vec2>,
@@ -73,6 +83,10 @@ pub struct RusHydroApp {
     show_grid: bool,
     show_grid_count: bool,
     color_by_speed: bool,
+    show_time_plot: bool,
+    time_history: VecDeque<f64>,
+    hash_time_history: VecDeque<f64>,
+    sort_time_history: VecDeque<(f64, f64)>,
 }
 
 impl RusHydroApp {
@@ -103,9 +117,13 @@ impl RusHydroApp {
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
             neighbor_mode: NeighborMode::HashMap,
             neighbor_payload: NeighborPayload::BruteForce,
-            show_grid: true,
+            show_grid: false,
             show_grid_count: false,
             color_by_speed: true,
+            show_time_plot: false,
+            time_history: VecDeque::new(),
+            hash_time_history: VecDeque::new(),
+            sort_time_history: VecDeque::new(),
         }
     }
 
@@ -293,24 +311,36 @@ impl RusHydroApp {
 
         match self.neighbor_payload {
             NeighborPayload::BruteForce => {
-                for (i, particle_i) in self.particles.iter().enumerate() {
-                    for (j, particle_j) in self.particles.iter().enumerate() {
-                        if i == j {
-                            continue;
+                let (_, time) = crate::measure_time(|| {
+                    for (i, particle_i) in self.particles.iter().enumerate() {
+                        for (j, particle_j) in self.particles.iter().enumerate() {
+                            if i == j {
+                                continue;
+                            }
+                            Self::update_speed(particle_i, particle_j, &self.params);
                         }
-                        Self::update_speed(particle_i, particle_j, &self.params);
                     }
+                });
+                self.time_history.push_back(time);
+                if MAX_HISTORY < self.time_history.len() {
+                    self.time_history.pop_front();
                 }
             }
             NeighborPayload::HashMap(ref mut hash_map) => {
-                hash_map.clear();
-                for (i, particle_i) in self.particles.iter().enumerate() {
-                    let pos = particle_i.pos.get();
-                    let grid_pos = (
-                        pos.x.div_euclid(CELL_SIZE) as i32,
-                        pos.y.div_euclid(CELL_SIZE) as i32,
-                    );
-                    hash_map.entry(grid_pos).or_default().push(i);
+                let (_, time) = crate::measure_time(|| {
+                    hash_map.clear();
+                    for (i, particle_i) in self.particles.iter().enumerate() {
+                        let pos = particle_i.pos.get();
+                        let grid_pos = (
+                            pos.x.div_euclid(CELL_SIZE) as i32,
+                            pos.y.div_euclid(CELL_SIZE) as i32,
+                        );
+                        hash_map.entry(grid_pos).or_default().push(i);
+                    }
+                });
+                self.hash_time_history.push_back(time);
+                if MAX_HISTORY < self.hash_time_history.len() {
+                    self.hash_time_history.pop_front();
                 }
 
                 for (i, particle_i) in self.particles.iter().enumerate() {
@@ -343,30 +373,38 @@ impl RusHydroApp {
                     (grid_pos.0 + grid_pos.1 * 32121).rem_euclid(self.particles.len() as i32)
                         as usize
                 };
-                for (i, particle_i) in self.particles.iter().enumerate() {
-                    let pos = particle_i.pos.get();
-                    let grid_pos = (
-                        pos.x.div_euclid(CELL_SIZE) as i32,
-                        pos.y.div_euclid(CELL_SIZE) as i32,
-                    );
-                    // let mut hasher = std::hash::SipHasher::new();
-                    // grid_pos.hash(&mut hasher);
-                    // let grid_hash: usize = hasher.into() % self.particle_hash.len();
-                    let cell_hash = hasher(grid_pos);
-                    hash_table[i] = HashEntry {
-                        particle_idx: i,
-                        cell_hash,
-                    };
-                }
-                hash_table.sort_by_key(|entry| entry.cell_hash);
-                for i in 0..self.particles.len() {
-                    let first = hash_table
-                        .iter()
-                        .enumerate()
-                        .find(|(_, p)| p.cell_hash == i);
-                    if let Some(first) = first {
-                        start_offsets[i] = first.0;
+                let (_, hash_time) = measure_time(|| {
+                    for (i, particle_i) in self.particles.iter().enumerate() {
+                        let pos = particle_i.pos.get();
+                        let grid_pos = (
+                            pos.x.div_euclid(CELL_SIZE) as i32,
+                            pos.y.div_euclid(CELL_SIZE) as i32,
+                        );
+                        // let mut hasher = std::hash::SipHasher::new();
+                        // grid_pos.hash(&mut hasher);
+                        // let grid_hash: usize = hasher.into() % self.particle_hash.len();
+                        let cell_hash = hasher(grid_pos);
+                        hash_table[i] = HashEntry {
+                            particle_idx: i,
+                            cell_hash,
+                        };
                     }
+                });
+                let (_, sort_time) = crate::measure_time(|| {
+                    hash_table.sort_by_key(|entry| entry.cell_hash);
+                    for i in 0..self.particles.len() {
+                        let first = hash_table
+                            .iter()
+                            .enumerate()
+                            .find(|(_, p)| p.cell_hash == i);
+                        if let Some(first) = first {
+                            start_offsets[i] = first.0;
+                        }
+                    }
+                });
+                self.sort_time_history.push_back((hash_time, sort_time));
+                if MAX_HISTORY < self.sort_time_history.len() {
+                    self.sort_time_history.pop_front();
                 }
 
                 for (i, particle_i) in self.particles.iter().enumerate() {
@@ -449,6 +487,118 @@ impl RusHydroApp {
             particle.velo.set(velo);
         }
     }
+
+    fn ui_panel(&mut self, ui: &mut Ui) {
+        if ui.button("Reset").clicked() {
+            self.reset();
+        }
+        ui.label("Num particles (needs reset):");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.num_particles,
+            1..=15000,
+        ));
+        ui.label("Width:");
+        if ui
+            .add(egui::widgets::Slider::new(
+                &mut self.rect.max.x,
+                1.0..=100.0,
+            ))
+            .changed()
+        {
+            self.rect.min.x = -self.rect.max.x;
+        };
+        ui.label("Height:");
+        if ui
+            .add(egui::widgets::Slider::new(
+                &mut self.rect.max.y,
+                1.0..=100.0,
+            ))
+            .changed()
+        {
+            self.rect.min.y = -self.rect.max.y;
+        };
+        ui.label("Restitution:");
+        ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
+        ui.label("Repulsion force:");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.params.repulsion_force,
+            (0.)..=1.0,
+        ));
+        ui.label("Viscosity:");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.params.viscosity,
+            (0.)..=0.01,
+        ));
+        ui.label("Surface tension:");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.params.surface_tension,
+            (0.)..=0.5,
+        ));
+        ui.label("Gravity:");
+        ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
+        ui.label("Mouse effect radius:");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.mouse_effect_radius,
+            (0.)..=10.,
+        ));
+        ui.group(|ui| {
+            ui.label("Neighbor search:");
+            ui.radio_value(
+                &mut self.neighbor_mode,
+                NeighborMode::BruteForce,
+                "Brute force",
+            );
+            ui.radio_value(&mut self.neighbor_mode, NeighborMode::HashMap, "Hash map");
+            ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
+        });
+        ui.checkbox(&mut self.show_grid, "Show grid");
+        ui.checkbox(&mut self.show_grid_count, "Show grid count");
+        ui.checkbox(&mut self.color_by_speed, "Color by speed");
+        ui.checkbox(&mut self.show_time_plot, "Show time plot");
+    }
+
+    fn plot_time(&mut self, ui: &mut Ui) {
+        let plot = Plot::new("plot");
+        plot.legend(Legend::default()).show(ui, |plot_ui| {
+            let gen_line = |points, i, name| {
+                Line::new(points)
+                    .color(eframe::egui::Color32::from_rgb(
+                        (i % 2 * 200) as u8,
+                        (i % 4 * 200) as u8,
+                        (i % 8 * 100) as u8,
+                    ))
+                    .name(name)
+            };
+            let points: PlotPoints = self
+                .time_history
+                .iter()
+                .enumerate()
+                .map(|(t, v)| [t as f64, *v])
+                .collect();
+            plot_ui.line(gen_line(points, 0, "BruteForce time"));
+            let points: PlotPoints = self
+                .hash_time_history
+                .iter()
+                .enumerate()
+                .map(|(t, v)| [t as f64, *v])
+                .collect();
+            plot_ui.line(gen_line(points, 1, "HashMap time"));
+            let hash_points: PlotPoints = self
+                .sort_time_history
+                .iter()
+                .enumerate()
+                .map(|(t, v)| [t as f64, v.0])
+                .collect();
+            let sort_points: PlotPoints = self
+                .sort_time_history
+                .iter()
+                .enumerate()
+                .map(|(t, v)| [t as f64, v.1])
+                .collect();
+            plot_ui.line(gen_line(hash_points, 2, "SortMap Hash time"));
+            plot_ui.line(gen_line(sort_points, 3, "SortMap sort time"));
+        });
+    }
 }
 
 impl eframe::App for RusHydroApp {
@@ -457,75 +607,17 @@ impl eframe::App for RusHydroApp {
 
         self.update_particles();
 
-        eframe::egui::SidePanel::right("side_panel")
+        egui::SidePanel::right("side_panel")
             .min_width(200.)
-            .show(ctx, |ui| {
-                if ui.button("Reset").clicked() {
-                    self.reset();
-                }
-                ui.label("Num particles (needs reset):");
-                ui.add(egui::widgets::Slider::new(
-                    &mut self.num_particles,
-                    1..=15000,
-                ));
-                ui.label("Width:");
-                if ui
-                    .add(egui::widgets::Slider::new(
-                        &mut self.rect.max.x,
-                        1.0..=100.0,
-                    ))
-                    .changed()
-                {
-                    self.rect.min.x = -self.rect.max.x;
-                };
-                ui.label("Height:");
-                if ui
-                    .add(egui::widgets::Slider::new(
-                        &mut self.rect.max.y,
-                        1.0..=100.0,
-                    ))
-                    .changed()
-                {
-                    self.rect.min.y = -self.rect.max.y;
-                };
-                ui.label("Restitution:");
-                ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
-                ui.label("Repulsion force:");
-                ui.add(egui::widgets::Slider::new(
-                    &mut self.params.repulsion_force,
-                    (0.)..=1.0,
-                ));
-                ui.label("Viscosity:");
-                ui.add(egui::widgets::Slider::new(
-                    &mut self.params.viscosity,
-                    (0.)..=0.01,
-                ));
-                ui.label("Surface tension:");
-                ui.add(egui::widgets::Slider::new(
-                    &mut self.params.surface_tension,
-                    (0.)..=0.5,
-                ));
-                ui.label("Gravity:");
-                ui.add(egui::widgets::Slider::new(&mut self.gravity, (0.)..=0.1));
-                ui.label("Mouse effect radius:");
-                ui.add(egui::widgets::Slider::new(
-                    &mut self.mouse_effect_radius,
-                    (0.)..=10.,
-                ));
-                ui.group(|ui| {
-                    ui.label("Neighbor search:");
-                    ui.radio_value(
-                        &mut self.neighbor_mode,
-                        NeighborMode::BruteForce,
-                        "Brute force",
-                    );
-                    ui.radio_value(&mut self.neighbor_mode, NeighborMode::HashMap, "Hash map");
-                    ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
+            .show(ctx, |ui| self.ui_panel(ui));
+
+        if self.show_time_plot {
+            egui::TopBottomPanel::bottom("bottom_chart")
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.plot_time(ui);
                 });
-                ui.checkbox(&mut self.show_grid, "Show grid");
-                ui.checkbox(&mut self.show_grid_count, "Show grid count");
-                ui.checkbox(&mut self.color_by_speed, "Color by speed");
-            });
+        }
 
         egui::CentralPanel::default()
             // .resizable(true)
