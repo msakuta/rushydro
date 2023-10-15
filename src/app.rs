@@ -391,7 +391,7 @@ impl RusHydroApp {
                     }
                 });
                 let (_, sort_time) = crate::measure_time(|| {
-                    hash_table.sort_by_key(|entry| entry.cell_hash);
+                    hash_table.sort_unstable_by_key(|entry| entry.cell_hash);
                     for i in 0..self.particles.len() {
                         let first = hash_table
                             .iter()
