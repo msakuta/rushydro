@@ -1,4 +1,5 @@
 mod app;
+mod marching_squares;
 
 use app::RusHydroApp;
 
