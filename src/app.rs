@@ -18,7 +18,9 @@ use rand::{thread_rng, Rng};
 
 use self::particles::Particle;
 
-use crate::marching_squares::{border_pixel, cell_border_index, pick_bits, Shape};
+use crate::marching_squares::{
+    border_pixel, cell_border_interpolated, pick_bits, pick_values, Shape,
+};
 
 const SCALE: f32 = 10.;
 const NUM_PARTICLES: usize = 200;
@@ -186,18 +188,22 @@ impl RusHydroApp {
                 let pix_rad = (self.density_radius / resol).ceil() as isize;
                 for particle in self.particles.iter() {
                     let density_pos = (
-                        (particle.pos.get().x - self.rect.min.x).div_euclid(resol) as isize,
-                        (particle.pos.get().y - self.rect.min.y).div_euclid(resol) as isize,
+                        (particle.pos.get().x - self.rect.min.x) / resol,
+                        (particle.pos.get().y - self.rect.min.y) / resol,
                     );
-                    for cy in density_pos.1 - pix_rad..=density_pos.1 + pix_rad {
-                        for cx in density_pos.0 - pix_rad..=density_pos.0 + pix_rad {
+                    let density_idx = (
+                        density_pos.0.floor() as isize,
+                        density_pos.1.floor() as isize,
+                    );
+                    for cy in density_idx.1 - pix_rad..=density_idx.1 + pix_rad {
+                        for cx in density_idx.0 - pix_rad..=density_idx.0 + pix_rad {
                             if 0 <= cx
                                 && cx < self.density_shape.0
                                 && 0 <= cy
                                 && cy < self.density_shape.1
                             {
-                                let dx = (cx - density_pos.0) as f32;
-                                let dy = (cy - density_pos.1) as f32;
+                                let dx = cx as f32 - density_pos.0;
+                                let dy = cy as f32 - density_pos.1;
                                 self.density_map[(cx + cy * self.density_shape.0) as usize] +=
                                     1. / (1. + dx * dx + dy * dy);
                             }
@@ -206,15 +212,16 @@ impl RusHydroApp {
                 }
 
                 for cy in 0..self.density_shape.1 - 1 {
-                    let offset_y = (cy as f32 + 1.) * resol + self.rect.min.y;
+                    let offset_y = (cy as f32 + 0.5) * resol + self.rect.min.y;
                     for cx in 0..self.density_shape.0 - 1 {
-                        let offset_x = (cx as f32 + 1.) * resol + self.rect.min.x;
+                        let offset_x = (cx as f32 + 0.5) * resol + self.rect.min.x;
                         let bits = pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
                         if !border_pixel(bits) {
                             continue;
                         }
-                        if let Some(lines) = cell_border_index(bits) {
-                            for line in lines.chunks(4) {
+                        let values = pick_values(&self.density_map, self.density_shape, (cx, cy));
+                        if let Some((lines, len)) = cell_border_interpolated(bits, values) {
+                            for line in lines.chunks(4).take(len / 4) {
                                 let points = [
                                     to_pos2(pos2(
                                         line[0] * resol * 0.5 + offset_x,

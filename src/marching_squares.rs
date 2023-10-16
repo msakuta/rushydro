@@ -18,32 +18,86 @@ pub(crate) fn pick_bits(f: &[f32], shape: Shape, pos: (isize, isize), threshold:
         | (((f[shape.idx(pos.0, pos.1 + 1)] > threshold) as u8) << 3)
 }
 
+pub(crate) fn pick_values(f: &[f32], shape: Shape, pos: (isize, isize)) -> [f32; 4] {
+    [
+        f[shape.idx(pos.0, pos.1)],
+        f[shape.idx(pos.0 + 1, pos.1)],
+        f[shape.idx(pos.0 + 1, pos.1 + 1)],
+        f[shape.idx(pos.0, pos.1 + 1)],
+    ]
+}
+
 /// LINE_WIDTH won't work well with cargo fmt
 const LW: f32 = 0.;
 
-pub(crate) const CELL_BORDER_BUFFER: [[f32; 4]; 6] = [
-    [1., 0., -1., 0.],
-    [0., 1., 0., -1.],
-    [-1., 0., 0., -1.],
-    [0., -1., 1., 0.],
-    [1., 0., 0., 1.],
-    [0., 1., -1., 0.],
-];
-
 /// Index into CELL_BORDER_BUFFER
+#[allow(dead_code)]
 pub(crate) fn cell_border_index(bits: u8) -> Option<&'static [f32]> {
-    let idx = match bits {
-        1 | 14 => 2,
-        2 | 13 => 3,
-        4 | 11 => 4,
-        8 | 7 => 5,
-        3 | 12 => 0,
-        9 | 6 => 1,
-        5 => return Some(&[-1., 0., 0., -1., 1., 0., 0., 1.]),
-        10 => return Some(&[0., -1., 1., 0., 0., 1., -1., 0.]),
+    Some(match bits {
+        1 | 14 => &[-1., 0., 0., -1.],
+        2 | 13 => &[0., -1., 1., 0.],
+        4 | 11 => &[1., 0., 0., 1.],
+        8 | 7 => &[0., 1., -1., 0.],
+        3 | 12 => &[1., 0., -1., 0.],
+        9 | 6 => &[0., 1., 0., -1.],
+        5 => &[-1., 0., 0., -1., 1., 0., 0., 1.],
+        10 => &[0., -1., 1., 0., 0., 1., -1., 0.],
+        _ => return None,
+    })
+}
+
+pub(crate) fn cell_border_interpolated(bits: u8, values: [f32; 4]) -> Option<([f32; 8], usize)> {
+    let factor = |f0: f32, f1| (1. - (f0 + f1)) / (-f0 + f1);
+    let arr = match bits {
+        1 | 14 => {
+            let x = factor(values[0], values[1]);
+            let y = factor(values[0], values[3]);
+            [-1., y, x, -1.]
+        }
+        2 | 13 => {
+            let x = factor(values[0], values[1]);
+            let y = factor(values[1], values[2]);
+            [x, -1., 1., y]
+        }
+        4 | 11 => {
+            let x = factor(values[3], values[2]);
+            let y = factor(values[1], values[2]);
+            [1., y, x, 1.]
+        }
+        8 | 7 => {
+            let x = factor(values[3], values[2]);
+            let y = factor(values[0], values[3]);
+            [x, 1., -1., y]
+        }
+        3 | 12 => {
+            let y0 = factor(values[0], values[3]);
+            let y1 = factor(values[1], values[2]);
+            [1., y1, -1., y0]
+        }
+        9 | 6 => {
+            let x0 = factor(values[0], values[1]);
+            let x1 = factor(values[3], values[2]);
+            [x1, 1., x0, -1.]
+        }
+        5 => {
+            let x0 = factor(values[0], values[1]);
+            let y0 = factor(values[0], values[3]);
+            let x1 = factor(values[3], values[2]);
+            let y1 = factor(values[1], values[2]);
+            return Some(([-1., y0, x0, -1., 1., y1, x1, 1.], 8));
+        }
+        10 => {
+            let x0 = factor(values[0], values[1]);
+            let y0 = factor(values[1], values[2]);
+            let x1 = factor(values[3], values[2]);
+            let y1 = factor(values[0], values[3]);
+            return Some(([x0, -1., 1., y0, x1, 1., -1., y1], 8));
+        }
         _ => return None,
     };
-    Some(&CELL_BORDER_BUFFER[idx])
+    let mut ret = [0.; 8];
+    ret[0..4].copy_from_slice(&arr);
+    Some((ret, 4))
 }
 
 /// buffer for vertex shader, use with SliceFlatExt::flat()
