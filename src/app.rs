@@ -30,9 +30,11 @@ const RESTITUTION: f32 = 0.5;
 const REPULSION_FORCE: f32 = 0.1;
 const VISCOSITY: f32 = 0.01;
 const SURFACE_TENSION: f32 = 0.05;
+const SURFACE_TENSION_THRESHOLD: f32 = 0.1;
 const G: f32 = 0.01;
 const MOUSE_EFFECT_RADIUS: f32 = 5.;
 const MAX_HISTORY: usize = 1000;
+const DENSITY_RESOLUTION: f32 = PARTICLE_RADIUS * 0.5;
 
 #[derive(PartialEq, Eq, Debug)]
 enum NeighborMode {
@@ -89,6 +91,7 @@ pub struct RusHydroApp {
     time_history: VecDeque<f64>,
     hash_time_history: VecDeque<f64>,
     sort_time_history: VecDeque<(f64, f64)>,
+    density_resolution: f32,
     density_map: Vec<f32>,
     density_shape: Shape,
 }
@@ -106,7 +109,8 @@ impl RusHydroApp {
                 velo: Cell::new(Vec2::ZERO),
             })
             .collect();
-        let (density_map, density_shape) = Self::gen_board(&rect);
+        let density_resolution = DENSITY_RESOLUTION;
+        let (density_map, density_shape) = Self::gen_board(&rect, density_resolution);
         Self {
             particles,
             rect,
@@ -116,7 +120,7 @@ impl RusHydroApp {
                 repulsion_force: REPULSION_FORCE,
                 viscosity: VISCOSITY,
                 surface_tension: SURFACE_TENSION,
-                surface_tension_threshold: 0.3,
+                surface_tension_threshold: SURFACE_TENSION_THRESHOLD,
             },
             gravity: G,
             mouse_down: None,
@@ -132,14 +136,15 @@ impl RusHydroApp {
             time_history: VecDeque::new(),
             hash_time_history: VecDeque::new(),
             sort_time_history: VecDeque::new(),
+            density_resolution,
             density_map,
             density_shape,
         }
     }
 
-    fn gen_board(rect: &Rect) -> (Vec<f32>, Shape) {
-        let width = (rect.width() / CELL_SIZE) as usize + 1;
-        let height = (rect.height() / CELL_SIZE) as usize + 1;
+    fn gen_board(rect: &Rect, density_resolution: f32) -> (Vec<f32>, Shape) {
+        let width = (rect.width() / density_resolution) as usize + 1;
+        let height = (rect.height() / density_resolution) as usize + 1;
         (vec![0.; width * height], (width as isize, height as isize))
     }
 
@@ -174,10 +179,11 @@ impl RusHydroApp {
 
             if self.show_surface {
                 self.density_map.fill(0.);
+                let resol = self.density_resolution;
                 for particle in self.particles.iter() {
                     let density_pos = (
-                        (particle.pos.get().x - self.rect.min.x).div_euclid(CELL_SIZE) as isize,
-                        (particle.pos.get().y - self.rect.min.y).div_euclid(CELL_SIZE) as isize,
+                        (particle.pos.get().x - self.rect.min.x).div_euclid(resol) as isize,
+                        (particle.pos.get().y - self.rect.min.y).div_euclid(resol) as isize,
                     );
                     if 0 <= density_pos.0
                         && density_pos.0 < self.density_shape.0
@@ -190,9 +196,9 @@ impl RusHydroApp {
                 }
 
                 for cy in 0..self.density_shape.1 - 1 {
-                    let offset_y = cy as f32 * CELL_SIZE + self.rect.min.y;
+                    let offset_y = (cy as f32 + 1.) * resol + self.rect.min.y;
                     for cx in 0..self.density_shape.0 - 1 {
-                        let offset_x = cx as f32 * CELL_SIZE + self.rect.min.x;
+                        let offset_x = (cx as f32 + 1.) * resol + self.rect.min.x;
                         let bits = pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
                         if !border_pixel(bits) {
                             continue;
@@ -200,8 +206,14 @@ impl RusHydroApp {
                         if let Some(lines) = cell_border_index(bits) {
                             for line in lines.chunks(4) {
                                 let points = [
-                                    to_pos2(pos2(line[0] + offset_x, line[1] + offset_y)),
-                                    to_pos2(pos2(line[2] + offset_x, line[3] + offset_y)),
+                                    to_pos2(pos2(
+                                        line[0] * resol * 0.5 + offset_x,
+                                        line[1] * resol * 0.5 + offset_y,
+                                    )),
+                                    to_pos2(pos2(
+                                        line[2] * resol * 0.5 + offset_x,
+                                        line[3] * resol * 0.5 + offset_y,
+                                    )),
                                 ];
                                 // let poly = PathShape::convex_polygon(points.clone(), Color32::from_rgb(127, 191, 255), (0., Color32::BLUE));
                                 // painter.add(poly);
@@ -327,7 +339,8 @@ impl RusHydroApp {
             .changed()
         {
             self.rect.min.x = -self.rect.max.x;
-            (self.density_map, self.density_shape) = Self::gen_board(&self.rect);
+            (self.density_map, self.density_shape) =
+                Self::gen_board(&self.rect, self.density_resolution);
         };
         ui.label("Height:");
         if ui
@@ -338,7 +351,8 @@ impl RusHydroApp {
             .changed()
         {
             self.rect.min.y = -self.rect.max.y;
-            (self.density_map, self.density_shape) = Self::gen_board(&self.rect);
+            (self.density_map, self.density_shape) =
+                Self::gen_board(&self.rect, self.density_resolution);
         };
         ui.label("Restitution:");
         ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
@@ -379,6 +393,17 @@ impl RusHydroApp {
             ui.radio_value(&mut self.neighbor_mode, NeighborMode::HashMap, "Hash map");
             ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
         });
+        ui.label("Contour grid cell:");
+        if ui
+            .add(egui::widgets::Slider::new(
+                &mut self.density_resolution,
+                (0.1)..=4.,
+            ))
+            .changed()
+        {
+            (self.density_map, self.density_shape) =
+                Self::gen_board(&self.rect, self.density_resolution);
+        }
         ui.checkbox(&mut self.show_particles, "Show particles");
         ui.checkbox(&mut self.show_surface, "Show surface");
         ui.checkbox(&mut self.show_grid, "Show grid");
