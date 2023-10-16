@@ -27,14 +27,15 @@ const PARTICLE_RADIUS2: f32 = PARTICLE_RADIUS * PARTICLE_RADIUS;
 const PARTICLE_RENDER_RADIUS: f32 = 3.;
 const CELL_SIZE: f32 = PARTICLE_RADIUS;
 const RESTITUTION: f32 = 0.5;
-const REPULSION_FORCE: f32 = 0.1;
+const REPULSION_FORCE: f32 = 0.2;
 const VISCOSITY: f32 = 0.01;
-const SURFACE_TENSION: f32 = 0.05;
-const SURFACE_TENSION_THRESHOLD: f32 = 0.1;
+const SURFACE_TENSION: f32 = 0.5;
+const SURFACE_TENSION_THRESHOLD: f32 = 0.05;
 const G: f32 = 0.01;
 const MOUSE_EFFECT_RADIUS: f32 = 5.;
 const MAX_HISTORY: usize = 1000;
 const DENSITY_RESOLUTION: f32 = PARTICLE_RADIUS * 0.5;
+const DENSITY_RADIUS: f32 = PARTICLE_RADIUS;
 
 #[derive(PartialEq, Eq, Debug)]
 enum NeighborMode {
@@ -92,6 +93,7 @@ pub struct RusHydroApp {
     hash_time_history: VecDeque<f64>,
     sort_time_history: VecDeque<(f64, f64)>,
     density_resolution: f32,
+    density_radius: f32,
     density_map: Vec<f32>,
     density_shape: Shape,
 }
@@ -137,6 +139,7 @@ impl RusHydroApp {
             hash_time_history: VecDeque::new(),
             sort_time_history: VecDeque::new(),
             density_resolution,
+            density_radius: DENSITY_RADIUS,
             density_map,
             density_shape,
         }
@@ -180,18 +183,25 @@ impl RusHydroApp {
             if self.show_surface {
                 self.density_map.fill(0.);
                 let resol = self.density_resolution;
+                let pix_rad = (self.density_radius / resol).ceil() as isize;
                 for particle in self.particles.iter() {
                     let density_pos = (
                         (particle.pos.get().x - self.rect.min.x).div_euclid(resol) as isize,
                         (particle.pos.get().y - self.rect.min.y).div_euclid(resol) as isize,
                     );
-                    if 0 <= density_pos.0
-                        && density_pos.0 < self.density_shape.0
-                        && 0 <= density_pos.1
-                        && density_pos.1 < self.density_shape.1
-                    {
-                        self.density_map
-                            [(density_pos.0 + density_pos.1 * self.density_shape.0) as usize] += 1.;
+                    for cy in density_pos.1 - pix_rad..=density_pos.1 + pix_rad {
+                        for cx in density_pos.0 - pix_rad..=density_pos.0 + pix_rad {
+                            if 0 <= cx
+                                && cx < self.density_shape.0
+                                && 0 <= cy
+                                && cy < self.density_shape.1
+                            {
+                                let dx = (cx - density_pos.0) as f32;
+                                let dy = (cy - density_pos.1) as f32;
+                                self.density_map[(cx + cy * self.density_shape.0) as usize] +=
+                                    1. / (1. + dx * dx + dy * dy);
+                            }
+                        }
                     }
                 }
 
@@ -369,7 +379,7 @@ impl RusHydroApp {
         ui.label("Surface tension:");
         ui.add(egui::widgets::Slider::new(
             &mut self.params.surface_tension,
-            (0.)..=0.5,
+            (0.)..=1.0,
         ));
         ui.label("Surf. ten. threshold:");
         ui.add(egui::widgets::Slider::new(
@@ -394,13 +404,20 @@ impl RusHydroApp {
             ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
         });
         ui.label("Contour grid cell:");
-        if ui
+        let mut density_changed = ui
             .add(egui::widgets::Slider::new(
                 &mut self.density_resolution,
                 (0.1)..=4.,
             ))
-            .changed()
-        {
+            .changed();
+        ui.label("Contour particle radius:");
+        density_changed |= ui
+            .add(egui::widgets::Slider::new(
+                &mut self.density_radius,
+                (0.1)..=4.,
+            ))
+            .changed();
+        if density_changed {
             (self.density_map, self.density_shape) =
                 Self::gen_board(&self.rect, self.density_resolution);
         }
@@ -464,7 +481,9 @@ impl eframe::App for RusHydroApp {
 
         egui::SidePanel::right("side_panel")
             .min_width(200.)
-            .show(ctx, |ui| self.ui_panel(ui));
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.ui_panel(ui))
+            });
 
         if self.show_time_plot {
             egui::TopBottomPanel::bottom("bottom_chart")
