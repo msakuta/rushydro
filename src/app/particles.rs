@@ -40,8 +40,13 @@ impl RusHydroApp {
         let dist2 = delta.length_sq();
         if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
             let dist = dist2.sqrt();
-            let repulsion =
-                delta / dist * ((1. - dist / PARTICLE_RADIUS).powf(2.) - params.surface_tension);
+            let f = (1. - dist / PARTICLE_RADIUS).powf(2.);
+            let repulsion = delta / dist
+                * (if f < params.surface_tension_threshold {
+                    (f - params.surface_tension_threshold) * params.surface_tension
+                } else {
+                    f - params.surface_tension_threshold
+                });
             particle_i.velo.set(
                 velo_i
                     + repulsion * params.repulsion_force

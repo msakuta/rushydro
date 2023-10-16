@@ -66,6 +66,7 @@ struct Params {
     repulsion_force: f32,
     viscosity: f32,
     surface_tension: f32,
+    surface_tension_threshold: f32,
 }
 
 pub struct RusHydroApp {
@@ -115,6 +116,7 @@ impl RusHydroApp {
                 repulsion_force: REPULSION_FORCE,
                 viscosity: VISCOSITY,
                 surface_tension: SURFACE_TENSION,
+                surface_tension_threshold: 0.3,
             },
             gravity: G,
             mouse_down: None,
@@ -353,6 +355,11 @@ impl RusHydroApp {
         ui.label("Surface tension:");
         ui.add(egui::widgets::Slider::new(
             &mut self.params.surface_tension,
+            (0.)..=0.5,
+        ));
+        ui.label("Surf. ten. threshold:");
+        ui.add(egui::widgets::Slider::new(
+            &mut self.params.surface_tension_threshold,
             (0.)..=0.5,
         ));
         ui.label("Gravity:");
