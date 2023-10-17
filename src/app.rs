@@ -9,7 +9,7 @@ use eframe::{
     egui::{
         self,
         plot::{Legend, Line, Plot, PlotPoints},
-        Context, Frame, Ui,
+        Context, Frame, TextureOptions, Ui,
     },
     emath::Align2,
     epaint::{pos2, vec2, Color32, FontId, Pos2, Rect, Vec2},
@@ -87,6 +87,8 @@ pub struct RusHydroApp {
     neighbor_payload: NeighborPayload,
     show_particles: bool,
     show_surface: bool,
+    /// Show the liquid's filled color
+    show_filled_color: bool,
     show_grid: bool,
     show_grid_count: bool,
     color_by_speed: bool,
@@ -133,6 +135,7 @@ impl RusHydroApp {
             neighbor_payload: NeighborPayload::BruteForce,
             show_particles: true,
             show_surface: true,
+            show_filled_color: true,
             show_grid: false,
             show_grid_count: false,
             color_by_speed: true,
@@ -182,7 +185,7 @@ impl RusHydroApp {
                 )
             };
 
-            if self.show_surface {
+            if self.show_surface || self.show_filled_color {
                 self.density_map.fill(0.);
                 let resol = self.density_resolution;
                 let pix_rad = (self.density_radius / resol).ceil() as isize;
@@ -211,31 +214,80 @@ impl RusHydroApp {
                     }
                 }
 
-                for cy in 0..self.density_shape.1 - 1 {
-                    let offset_y = (cy as f32 + 0.5) * resol + self.rect.min.y;
-                    for cx in 0..self.density_shape.0 - 1 {
-                        let offset_x = (cx as f32 + 0.5) * resol + self.rect.min.x;
-                        let bits = pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
-                        if !border_pixel(bits) {
-                            continue;
+                if self.show_filled_color {
+                    let mut bits =
+                        vec![0u8; (self.density_shape.0 * self.density_shape.1) as usize];
+                    for cy in 0..self.density_shape.1 - 1 {
+                        for cx in 0..self.density_shape.0 - 1 {
+                            bits[(cx + cy * self.density_shape.0) as usize] =
+                                pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
                         }
-                        let values = pick_values(&self.density_map, self.density_shape, (cx, cy));
-                        if let Some((lines, len)) = cell_border_interpolated(bits, values) {
-                            for line in lines.chunks(4).take(len / 4) {
-                                let points = [
-                                    to_pos2(pos2(
-                                        line[0] * resol * 0.5 + offset_x,
-                                        line[1] * resol * 0.5 + offset_y,
-                                    )),
-                                    to_pos2(pos2(
-                                        line[2] * resol * 0.5 + offset_x,
-                                        line[3] * resol * 0.5 + offset_y,
-                                    )),
-                                ];
-                                // let poly = PathShape::convex_polygon(points.clone(), Color32::from_rgb(127, 191, 255), (0., Color32::BLUE));
-                                // painter.add(poly);
-                                // let stroke = PathShape::closed_line(points, );
-                                painter.line_segment(points, (1., Color32::RED));
+                    }
+
+                    let image = bits
+                        .iter()
+                        .map(|v| {
+                            if 15 == *v {
+                                [127, 255, 255]
+                            } else {
+                                [255, 255, 255]
+                            }
+                        })
+                        .flatten()
+                        .collect::<Vec<_>>();
+
+                    let image = egui::ColorImage::from_rgb(
+                        [self.density_shape.0 as usize, self.density_shape.1 as usize],
+                        &image,
+                    );
+
+                    let texture = painter.ctx().load_texture(
+                        "my-image",
+                        image,
+                        TextureOptions {
+                            magnification: egui::TextureFilter::Nearest,
+                            minification: egui::TextureFilter::Linear,
+                        },
+                    );
+
+                    const UV: Rect = Rect::from_min_max(pos2(0., 1.), Pos2::new(1.0, 0.0));
+                    let mut scr_rect = Rect::from_min_max(
+                        to_pos2(self.rect.min + Vec2::splat(0.5)),
+                        to_pos2(self.rect.max + Vec2::splat(0.5)),
+                    );
+                    std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+                    painter.image(texture.id(), scr_rect, UV, Color32::WHITE);
+                }
+
+                if self.show_surface {
+                    for cy in 0..self.density_shape.1 - 1 {
+                        let offset_y = (cy as f32 + 0.5) * resol + self.rect.min.y;
+                        for cx in 0..self.density_shape.0 - 1 {
+                            let offset_x = (cx as f32 + 0.5) * resol + self.rect.min.x;
+                            let bits =
+                                pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
+                            if !border_pixel(bits) {
+                                continue;
+                            }
+                            let values =
+                                pick_values(&self.density_map, self.density_shape, (cx, cy));
+                            if let Some((lines, len)) = cell_border_interpolated(bits, values) {
+                                for line in lines.chunks(4).take(len / 4) {
+                                    let points = [
+                                        to_pos2(pos2(
+                                            line[0] * resol * 0.5 + offset_x,
+                                            line[1] * resol * 0.5 + offset_y,
+                                        )),
+                                        to_pos2(pos2(
+                                            line[2] * resol * 0.5 + offset_x,
+                                            line[3] * resol * 0.5 + offset_y,
+                                        )),
+                                    ];
+                                    // let poly = PathShape::convex_polygon(points.clone(), Color32::from_rgb(127, 191, 255), (0., Color32::BLUE));
+                                    // painter.add(poly);
+                                    // let stroke = PathShape::closed_line(points, );
+                                    painter.line_segment(points, (1., Color32::RED));
+                                }
                             }
                         }
                     }
@@ -430,6 +482,7 @@ impl RusHydroApp {
         }
         ui.checkbox(&mut self.show_particles, "Show particles");
         ui.checkbox(&mut self.show_surface, "Show surface");
+        ui.checkbox(&mut self.show_filled_color, "Show filled color");
         ui.checkbox(&mut self.show_grid, "Show grid");
         ui.checkbox(&mut self.show_grid_count, "Show grid count");
         ui.checkbox(&mut self.color_by_speed, "Color by speed");
