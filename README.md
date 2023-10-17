@@ -4,6 +4,8 @@ Fluid simulation with particles
 
 Try it on your browser! https://msakuta.github.io/rushydro/
 
+![screenshot](images/screenshot00.png)
+
 ## What is this?
 
 This is a sister project of [cfd-wasm](https://github.com/msakuta/cfd-wasm), a fluid simulator in Rust.
