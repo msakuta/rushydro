@@ -280,11 +280,9 @@ impl RusHydroApp {
                             let values =
                                 pick_values(&self.density_map, self.density_shape, (cx, cy));
                             if self.show_filled_color {
-                                if let Some((lines, len)) = cell_polygon_interpolated(bits, values)
-                                {
-                                    let points = lines
+                                cell_polygon_interpolated(bits, values, |points| {
+                                    let points = points
                                         .chunks(2)
-                                        .take(len / 2)
                                         .map(|x| {
                                             to_pos2(pos2(
                                                 x[0] * resol * 0.5 + offset_x,
@@ -298,7 +296,7 @@ impl RusHydroApp {
                                         Stroke::NONE,
                                     );
                                     painter.add(poly);
-                                }
+                                });
                             }
                             if let Some((lines, len)) = cell_border_interpolated(bits, values) {
                                 for line in lines.chunks(4).take(len / 4) {

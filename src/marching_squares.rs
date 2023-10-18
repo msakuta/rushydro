@@ -115,78 +115,69 @@ pub(crate) fn cell_border_interpolated(bits: u8, values: [f32; 4]) -> Option<([f
     Some((ret, 4))
 }
 
-pub(crate) fn cell_polygon_interpolated(bits: u8, values: [f32; 4]) -> Option<([f32; 10], usize)> {
+/// Callback can be called 0, 1 or 2 times for each of the polygons.
+pub(crate) fn cell_polygon_interpolated(
+    bits: u8,
+    values: [f32; 4],
+    mut callback: impl FnMut(&[f32]),
+) {
     let factor = |f0: f32, f1| (1. - (f0 + f1)) / (-f0 + f1);
     let f = |i, j| factor(values[i], values[j]);
-    let mut ret = [0.; 10];
-    let num = match bits {
+    match bits {
         1 => {
-            ret[..6].copy_from_slice(&[-1., f(0, 3), f(0, 1), -1., -1., -1.]);
-            6
+            callback(&[-1., f(0, 3), f(0, 1), -1., -1., -1.]);
         }
         14 => {
-            ret[..10].copy_from_slice(&[-1., f(0, 3), f(0, 1), -1., 1., -1., 1., 1., -1., 1.]);
-            10
+            callback(&[-1., f(0, 3), f(0, 1), -1., 1., -1., 1., 1., -1., 1.]);
         }
         2 => {
-            ret[..6].copy_from_slice(&[f(0, 1), -1., 1., f(1, 2), 1., -1.]);
-            6
+            callback(&[f(0, 1), -1., 1., f(1, 2), 1., -1.]);
         }
         13 => {
-            ret[..10].copy_from_slice(&[f(0, 1), -1., 1., f(1, 2), 1., 1., -1., 1., -1., -1.]);
-            10
+            callback(&[f(0, 1), -1., 1., f(1, 2), 1., 1., -1., 1., -1., -1.]);
         }
         4 => {
-            ret[..6].copy_from_slice(&[1., f(1, 2), f(3, 2), 1., 1., 1.]);
-            6
+            callback(&[1., f(1, 2), f(3, 2), 1., 1., 1.]);
         }
         11 => {
-            ret[..10].copy_from_slice(&[1., f(1, 2), f(3, 2), 1., -1., 1., -1., -1., 1., -1.]);
-            10
+            callback(&[1., f(1, 2), f(3, 2), 1., -1., 1., -1., -1., 1., -1.]);
         }
         8 => {
-            ret[..6].copy_from_slice(&[f(3, 2), 1., -1., f(0, 3), -1., 1.]);
-            6
+            callback(&[f(3, 2), 1., -1., f(0, 3), -1., 1.]);
         }
         7 => {
-            ret[..10].copy_from_slice(&[f(3, 2), 1., -1., f(0, 3), -1., -1., 1., -1., 1., 1.]);
-            10
+            callback(&[f(3, 2), 1., -1., f(0, 3), -1., -1., 1., -1., 1., 1.]);
         }
         3 => {
-            ret[..8].copy_from_slice(&[1., f(1, 2), -1., f(0, 3), -1., -1., 1., -1.]);
-            8
+            callback(&[1., f(1, 2), -1., f(0, 3), -1., -1., 1., -1.]);
         }
         12 => {
-            ret[..8].copy_from_slice(&[1., f(1, 2), -1., f(0, 3), -1., 1., 1., 1.]);
-            8
+            callback(&[1., f(1, 2), -1., f(0, 3), -1., 1., 1., 1.]);
         }
         9 => {
-            ret[..8].copy_from_slice(&[f(3, 2), 1., f(0, 1), -1., -1., -1., -1., 1.]);
-            8
+            callback(&[f(3, 2), 1., f(0, 1), -1., -1., -1., -1., 1.]);
         }
         6 => {
-            ret[..8].copy_from_slice(&[f(3, 2), 1., f(0, 1), -1., 1., -1., 1., 1.]);
-            8
+            callback(&[f(3, 2), 1., f(0, 1), -1., 1., -1., 1., 1.]);
         }
         5 => {
-            let x0 = factor(values[0], values[1]);
-            let y0 = factor(values[0], values[3]);
-            let x1 = factor(values[3], values[2]);
-            let y1 = factor(values[1], values[2]);
-            ret[..8].copy_from_slice(&[-1., y0, x0, -1., 1., y1, x1, 1.]);
-            8
+            let x0 = f(0, 1);
+            let y0 = f(0, 3);
+            let x1 = f(3, 2);
+            let y1 = f(1, 2);
+            callback(&[-1., y0, x0, -1., -1., -1.]);
+            callback(&[1., 1., 1., y1, x1, 1.]);
         }
         10 => {
-            let x0 = factor(values[0], values[1]);
-            let y0 = factor(values[1], values[2]);
-            let x1 = factor(values[3], values[2]);
-            let y1 = factor(values[0], values[3]);
-            ret[..8].copy_from_slice(&[x0, -1., 1., y0, x1, 1., -1., y1]);
-            8
+            let x0 = f(0, 1);
+            let y0 = f(1, 2);
+            let x1 = f(3, 2);
+            let y1 = f(0, 3);
+            callback(&[x0, -1., 1., y0, -1., 1.]);
+            callback(&[1., -1., x1, 1., -1., y1]);
         }
-        _ => return None,
+        _ => {}
     };
-    Some((ret, num))
 }
 
 /// buffer for vertex shader, use with SliceFlatExt::flat()
