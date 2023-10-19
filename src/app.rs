@@ -16,7 +16,7 @@ use eframe::{
 };
 use rand::{thread_rng, Rng};
 
-use self::particles::Particle;
+use self::particles::{Obstacles, Particle};
 
 use crate::marching_squares::{
     border_pixel, cell_border_interpolated, cell_polygon_interpolated, pick_bits, pick_values,
@@ -86,6 +86,9 @@ pub struct RusHydroApp {
     mouse_effect_radius: f32,
     neighbor_mode: NeighborMode,
     neighbor_payload: NeighborPayload,
+    obstacle_select: Obstacles,
+    obstacles: Vec<Rect>,
+    paused: bool,
     show_particles: bool,
     show_surface: bool,
     /// Show the liquid's filled color
@@ -117,6 +120,8 @@ impl RusHydroApp {
             })
             .collect();
         let density_resolution = DENSITY_RESOLUTION;
+        let obstacle_select = Obstacles::None;
+        let obstacles = Self::gen_obstacles(&rect, obstacle_select);
         let (density_map, density_shape) = Self::gen_board(&rect, density_resolution);
         Self {
             particles,
@@ -134,6 +139,9 @@ impl RusHydroApp {
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
             neighbor_mode: NeighborMode::HashMap,
             neighbor_payload: NeighborPayload::BruteForce,
+            paused: false,
+            obstacle_select: Obstacles::None,
+            obstacles,
             show_particles: true,
             show_surface: true,
             show_filled_color: true,
@@ -184,6 +192,12 @@ impl RusHydroApp {
                     (scr_pos.x - canvas_offset_x) / SCALE,
                     -(scr_pos.y - canvas_offset_y) / SCALE,
                 )
+            };
+
+            let trans_rect = |rect: &Rect| {
+                let mut scr_rect = Rect::from_min_max(to_pos2(rect.min), to_pos2(rect.max));
+                std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
+                scr_rect
             };
 
             if self.show_surface || self.show_filled_color {
@@ -373,9 +387,12 @@ impl RusHydroApp {
                 _ => {}
             }
 
-            let mut scr_rect = Rect::from_min_max(to_pos2(self.rect.min), to_pos2(self.rect.max));
-            std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
-            scr_rect = scr_rect.expand(PARTICLE_RENDER_RADIUS);
+            for obstacle in &self.obstacles {
+                let scr_rect = trans_rect(obstacle).shrink(PARTICLE_RENDER_RADIUS);
+                painter.rect_stroke(scr_rect, 0., (1., Color32::BLACK));
+            }
+
+            let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);
             painter.rect_stroke(scr_rect, 0., (1., Color32::BLACK));
 
             if response.is_pointer_button_down_on() {
@@ -418,13 +435,14 @@ impl RusHydroApp {
         if ui.button("Reset").clicked() {
             self.reset();
         }
+        ui.checkbox(&mut self.paused, "Paused");
         ui.label("Num particles (needs reset):");
         ui.add(egui::widgets::Slider::new(
             &mut self.num_particles,
             1..=15000,
         ));
         ui.label("Width:");
-        if ui
+        let mut map_changed = if ui
             .add(egui::widgets::Slider::new(
                 &mut self.rect.max.x,
                 1.0..=100.0,
@@ -432,8 +450,9 @@ impl RusHydroApp {
             .changed()
         {
             self.rect.min.x = -self.rect.max.x;
-            (self.density_map, self.density_shape) =
-                Self::gen_board(&self.rect, self.density_resolution);
+            true
+        } else {
+            false
         };
         ui.label("Height:");
         if ui
@@ -444,9 +463,8 @@ impl RusHydroApp {
             .changed()
         {
             self.rect.min.y = -self.rect.max.y;
-            (self.density_map, self.density_shape) =
-                Self::gen_board(&self.rect, self.density_resolution);
-        };
+            map_changed = true;
+        }
         ui.label("Restitution:");
         ui.add(egui::widgets::Slider::new(&mut self.restitution, (0.)..=1.));
         ui.label("Repulsion force:");
@@ -477,6 +495,15 @@ impl RusHydroApp {
             (0.)..=10.,
         ));
         ui.group(|ui| {
+            ui.label("Obstacles:");
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::None, "None")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::S, "S shape")
+                .changed();
+        });
+        ui.group(|ui| {
             ui.label("Neighbor search:");
             ui.radio_value(
                 &mut self.neighbor_mode,
@@ -487,22 +514,23 @@ impl RusHydroApp {
             ui.radio_value(&mut self.neighbor_mode, NeighborMode::SortMap, "Sort map");
         });
         ui.label("Contour grid cell:");
-        let mut density_changed = ui
+        map_changed |= ui
             .add(egui::widgets::Slider::new(
                 &mut self.density_resolution,
                 (0.1)..=4.,
             ))
             .changed();
         ui.label("Contour particle radius:");
-        density_changed |= ui
+        map_changed |= ui
             .add(egui::widgets::Slider::new(
                 &mut self.density_radius,
                 (0.1)..=4.,
             ))
             .changed();
-        if density_changed {
+        if map_changed {
             (self.density_map, self.density_shape) =
                 Self::gen_board(&self.rect, self.density_resolution);
+            self.obstacles = Self::gen_obstacles(&self.rect, self.obstacle_select);
         }
         ui.checkbox(&mut self.show_particles, "Show particles");
         ui.checkbox(&mut self.show_surface, "Show surface");
@@ -561,7 +589,9 @@ impl eframe::App for RusHydroApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint();
 
-        self.update_particles();
+        if !self.paused {
+            self.update_particles();
+        }
 
         egui::SidePanel::right("side_panel")
             .min_width(200.)
