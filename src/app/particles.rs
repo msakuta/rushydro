@@ -269,6 +269,13 @@ impl RusHydroApp {
             if self.rect.max.y < newpos.y && 0. < velo.y {
                 velo.y = -velo.y * self.restitution;
             }
+            if matches!(self.obstacle_select, Obstacles::S) {
+                if self.rect.max.x / 2. < croppos.x && croppos.y < self.rect.min.y + 1. {
+                    croppos.x = -croppos.x;
+                    croppos.y = self.rect.max.y - 1.;
+                    velo.x = -velo.x;
+                }
+            }
             particle.pos.set(croppos.to_vec2());
             particle.velo.set(velo);
         }
