@@ -389,7 +389,7 @@ impl RusHydroApp {
 
             for obstacle in &self.obstacles {
                 let scr_rect = trans_rect(obstacle).shrink(PARTICLE_RENDER_RADIUS);
-                painter.rect_stroke(scr_rect, 0., (1., Color32::BLACK));
+                painter.rect(scr_rect, 0., Color32::WHITE, (1., Color32::BLACK));
             }
 
             let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);
