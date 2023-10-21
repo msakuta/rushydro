@@ -1,3 +1,4 @@
+mod obstacle;
 mod particles;
 
 use std::{
@@ -16,7 +17,10 @@ use eframe::{
 };
 use rand::{thread_rng, Rng};
 
-use self::particles::{Obstacles, Particle};
+use self::{
+    obstacle::{Obstacle, Obstacles},
+    particles::Particle,
+};
 
 use crate::marching_squares::{
     border_pixel, cell_border_interpolated, cell_polygon_interpolated, pick_bits, pick_values,
@@ -87,7 +91,7 @@ pub struct RusHydroApp {
     neighbor_mode: NeighborMode,
     neighbor_payload: NeighborPayload,
     obstacle_select: Obstacles,
-    obstacles: Vec<Rect>,
+    obstacles: Vec<Obstacle>,
     paused: bool,
     show_particles: bool,
     show_surface: bool,
@@ -388,8 +392,14 @@ impl RusHydroApp {
             }
 
             for obstacle in &self.obstacles {
-                let scr_rect = trans_rect(obstacle).shrink(PARTICLE_RENDER_RADIUS);
-                painter.rect(scr_rect, 0., Color32::WHITE, (1., Color32::BLACK));
+                let points = obstacle
+                    .shrink(PARTICLE_RENDER_RADIUS / SCALE)
+                    .vertices()
+                    .into_iter()
+                    .map(to_pos2)
+                    .collect();
+                let shape = PathShape::convex_polygon(points, Color32::WHITE, (1., Color32::BLACK));
+                painter.add(shape);
             }
 
             let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);

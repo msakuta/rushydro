@@ -1,18 +1,12 @@
-use eframe::epaint::{pos2, vec2, Rect, Vec2};
+use eframe::epaint::{pos2, vec2, Vec2};
 use rand::{thread_rng, Rng};
 use std::{cell::Cell, collections::HashMap};
 
 use super::{
-    HashEntry, NeighborMode, NeighborPayload, Params, RusHydroApp, CELL_SIZE, MAX_HISTORY,
-    PARTICLE_RADIUS, PARTICLE_RADIUS2,
+    obstacle::Obstacles, HashEntry, NeighborMode, NeighborPayload, Params, RusHydroApp, CELL_SIZE,
+    MAX_HISTORY, PARTICLE_RADIUS, PARTICLE_RADIUS2,
 };
 use crate::measure_time;
-
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum Obstacles {
-    None,
-    S,
-}
 
 pub(super) struct Particle {
     pub pos: Cell<Vec2>,
@@ -34,23 +28,6 @@ impl RusHydroApp {
         self.particles = particles;
         // Force reinitialization of neighbor caches
         self.neighbor_payload = NeighborPayload::BruteForce;
-    }
-
-    pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<Rect> {
-        if matches!(obs, Obstacles::S) {
-            vec![
-                Rect {
-                    min: pos2(rect.min.x, -2. + rect.height() / 4.),
-                    max: pos2(0., 2. + rect.height() / 4.),
-                },
-                Rect {
-                    min: pos2(0., -2. - rect.height() / 4.),
-                    max: pos2(rect.max.x, 2. - rect.height() / 4.),
-                },
-            ]
-        } else {
-            vec![]
-        }
     }
 
     fn update_speed(particle_i: &Particle, particle_j: &Particle, params: &Params) {
@@ -247,14 +224,9 @@ impl RusHydroApp {
                 newpos.y.min(self.rect.max.y).max(self.rect.min.y),
             );
             for obstacle in &self.obstacles {
-                if obstacle.min.x < newpos.x && newpos.x < obstacle.max.x {
-                    if obstacle.min.y < newpos.y && newpos.y < obstacle.center().y {
-                        croppos.y = obstacle.min.y;
-                        velo.y = -velo.y * self.restitution;
-                    } else if obstacle.center().y < newpos.y && newpos.y < obstacle.max.y {
-                        croppos.y = obstacle.max.y;
-                        velo.y = -velo.y * self.restitution;
-                    }
+                if let Some((dist, normal)) = obstacle.hit_test(newpos) {
+                    croppos -= normal * dist;
+                    velo -= normal * normal.dot(velo) * (1. + self.restitution);
                 }
             }
             if newpos.x < self.rect.min.x && velo.x < 0. {
