@@ -10,9 +10,9 @@ pub(crate) enum Obstacles {
     WaterMill,
 }
 
-pub(super) struct RectObstacle {
+pub(super) struct Obstacle {
+    shape: ObstacleShape,
     transform: Transform,
-    halfsize: Vec2,
     velo: Vec2,
     angular_velo: f32,
     mass: f32,
@@ -22,15 +22,47 @@ pub(super) struct RectObstacle {
     sense_gravity: bool,
 }
 
-impl RectObstacle {
-    pub fn new(offset: Vec2, rotation: f32, halfsize: Vec2, mass: f32) -> Self {
+pub(super) enum ObstacleShape {
+    Rect(RectObstacle),
+    Compound(Vec<ObstacleShape>),
+}
+
+impl Obstacle {
+    pub fn new(ro: RectObstacle) -> Self {
+        let mass = ro.mass;
+        let moi = ro.moi();
         Self {
-            transform: Transform::new(offset, rotation),
-            halfsize,
+            shape: ObstacleShape::Rect(ro),
+            transform: Transform::default(),
             velo: Vec2::ZERO,
             angular_velo: 0.,
             mass,
-            moi: mass / 12. * (halfsize.x.powi(2) + halfsize.y.powi(2)),
+            moi,
+            pivot: None,
+            sense_gravity: false,
+        }
+    }
+
+    pub fn new_compound(v: Vec<ObstacleShape>, pos: Vec2) -> Self {
+        let mass = v.iter().map(ObstacleShape::mass).sum();
+        let moi = v
+            .iter()
+            .map(|c| {
+                // TODO: fix moment of inertia around non-centroid
+                let local_moi = c.moi();
+                local_moi
+            })
+            .sum();
+        Self {
+            shape: ObstacleShape::Compound(v),
+            transform: Transform {
+                offset: pos,
+                rotation: 0.,
+            },
+            velo: Vec2::ZERO,
+            angular_velo: 0.,
+            mass,
+            moi,
             pivot: None,
             sense_gravity: false,
         }
@@ -50,28 +82,31 @@ impl RectObstacle {
         }
     }
 
-    pub fn _offset(&self) -> Vec2 {
-        self.transform.offset
+    /// Call the callback for each of the shape in a potentially compound object.
+    ///
+    /// You can pass offset to render the shape with particle size into account.
+    pub fn foreach_shape(&self, f: &mut impl FnMut(&[Pos2]), ofs: f32) {
+        self.shape.foreach_shape(
+            &mut |points| {
+                let points: Vec<_> = points
+                    .iter()
+                    .map(|pos| self.transform.apply(*pos))
+                    .collect();
+                f(&points)
+            },
+            ofs,
+        );
     }
 
-    pub fn _halfsize(&self) -> Vec2 {
-        self.halfsize
-    }
-
-    pub fn vertices(&self) -> Vec<Pos2> {
-        let min = -self.halfsize;
-        let max = self.halfsize;
-        [min, vec2(max.x, min.y), max, vec2(min.x, max.y)]
-            .into_iter()
-            .map(|v| self.transform.apply(v.to_pos2()))
-            .collect()
-    }
-
-    pub fn shrink(&self, ofs: f32) -> Self {
-        Self {
-            halfsize: self.halfsize - Vec2::splat(ofs),
-            ..*self
-        }
+    /// Returns the distance (negative) and the normal vector of that surface.
+    pub fn hit_test(&self, pos: Vec2) -> Option<ObstacleHitResult> {
+        let local_pos = self.transform.apply_inverse(pos.to_pos2());
+        self.shape.hit_test(local_pos.to_vec2()).map(|mut res| {
+            res.normal = self.transform.apply_vec(res.normal);
+            let velo = self.angular_velo * rotate90(local_pos.to_vec2());
+            res.velo = self.transform.apply_vec(velo);
+            res
+        })
     }
 
     pub fn update(&mut self, gravity: f32, delta_time: f32) {
@@ -82,6 +117,105 @@ impl RectObstacle {
             self.transform.offset += self.velo * delta_time;
             self.transform.rotation += self.angular_velo * delta_time;
         }
+    }
+
+    pub(super) fn apply_impulse(&mut self, impulse: Vec2, pos: Vec2) {
+        if self.mass != 0. {
+            if self.pivot.is_none() {
+                self.velo += impulse / self.mass;
+            } else {
+                let moment = cross(pos - self.transform.offset, impulse);
+                self.angular_velo += moment / self.moi;
+            }
+        }
+    }
+}
+
+impl ObstacleShape {
+    pub fn mass(&self) -> f32 {
+        match self {
+            Self::Rect(r) => r.mass,
+            Self::Compound(c) => c.iter().map(|c| c.mass()).sum(),
+        }
+    }
+
+    fn moi(&self) -> f32 {
+        match self {
+            Self::Rect(r) => r.moi(),
+            Self::Compound(c) => c.iter().map(|c| c.moi()).sum(),
+        }
+    }
+
+    fn foreach_shape(&self, f: &mut impl FnMut(&[Pos2]), ofs: f32) {
+        match self {
+            Self::Rect(r) => f(&r.vertices(ofs)),
+            Self::Compound(c) => {
+                for v in c {
+                    v.foreach_shape(f, ofs);
+                }
+            }
+        }
+    }
+
+    fn hit_test(&self, pos: Vec2) -> Option<ObstacleHitResult> {
+        match self {
+            Self::Rect(r) => r.hit_test(pos),
+            Self::Compound(c) => c.iter().fold(None, |acc, cur| {
+                let Some(res) = cur.hit_test(pos) else {
+                    return acc;
+                };
+                if 0. < res.dist {
+                    return acc;
+                }
+                if let Some(acc) = acc {
+                    if res.dist < acc.dist {
+                        Some(res)
+                    } else {
+                        Some(acc)
+                    }
+                } else {
+                    Some(res)
+                }
+            }),
+        }
+    }
+}
+
+pub(super) struct RectObstacle {
+    transform: Transform,
+    halfsize: Vec2,
+    mass: f32,
+}
+
+impl RectObstacle {
+    pub fn new(offset: Vec2, rotation: f32, halfsize: Vec2, mass: f32) -> Self {
+        Self {
+            transform: Transform::new(offset, rotation),
+            halfsize,
+            mass,
+        }
+    }
+
+    pub fn _offset(&self) -> Vec2 {
+        self.transform.offset
+    }
+
+    pub fn _halfsize(&self) -> Vec2 {
+        self.halfsize
+    }
+
+    /// Moment of Inertia around center of gravity.
+    fn moi(&self) -> f32 {
+        self.mass / 12. * (self.halfsize.x.powi(2) + self.halfsize.y.powi(2))
+    }
+
+    pub fn vertices(&self, ofs: f32) -> Vec<Pos2> {
+        let min = -self.halfsize - Vec2::splat(ofs);
+        let max = self.halfsize + Vec2::splat(ofs);
+        [min, vec2(max.x, min.y), max, vec2(min.x, max.y)]
+            .into_iter()
+            .map(|v| self.transform.apply(v.to_pos2()))
+            .collect()
     }
 }
 
@@ -126,40 +260,25 @@ impl RectObstacle {
             (bottom, down),
         ]
         .iter()
-        .enumerate()
-        .fold(None, |acc: Option<(usize, (f32, Vec2))>, cur| {
-            if 0. < cur.1 .0 {
+        .fold(None, |acc: Option<(f32, Vec2)>, cur| {
+            if 0. < cur.0 {
                 return acc;
             }
             if let Some(acc) = acc {
-                if acc.1 .0 < cur.1 .0 {
-                    Some((cur.0, *cur.1))
+                if acc.0 < cur.0 {
+                    Some(*cur)
                 } else {
                     Some(acc)
                 }
             } else {
-                Some((cur.0, *cur.1))
+                Some(*cur)
             }
         })
-        .map(|(_, v)| {
-            let dp = pos - self.transform.offset;
-            ObstacleHitResult {
-                dist: v.0,
-                normal: v.1,
-                velo: self.angular_velo * rotate90(dp),
-            }
+        .map(|v| ObstacleHitResult {
+            dist: v.0,
+            normal: v.1,
+            velo: Vec2::ZERO,
         })
-    }
-
-    pub(super) fn apply_impulse(&mut self, impulse: Vec2, pos: Vec2) {
-        if self.mass != 0. {
-            if self.pivot.is_none() {
-                self.velo += impulse / self.mass;
-            } else {
-                let moment = cross(pos - self.transform.offset, impulse);
-                self.angular_velo += moment / self.moi;
-            }
-        }
     }
 }
 
@@ -172,7 +291,7 @@ fn cross(a: Vec2, b: Vec2) -> f32 {
 }
 
 /// Rotate and offset. No scaling.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Transform {
     offset: Vec2,
     rotation: f32,
@@ -197,37 +316,45 @@ impl Transform {
         let c = self.rotation.cos();
         vec2(v.x * c + v.y * s, v.x * -s + v.y * c)
     }
+
+    fn apply_inverse(&self, mut pos: Pos2) -> Pos2 {
+        let s = self.rotation.sin();
+        let c = self.rotation.cos();
+        pos.x -= self.offset.x;
+        pos.y -= self.offset.y;
+        pos2(pos.x * c + pos.y * -s, pos.x * s + pos.y * c)
+    }
 }
 
 impl RusHydroApp {
     pub(super) const SLOPE_ANGLE: f32 = std::f32::consts::PI * 0.05;
 
-    pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<RectObstacle> {
+    pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<Obstacle> {
         let gen_slope = || {
             let y_off = rect.width() * 0.5 * Self::SLOPE_ANGLE.sin();
-            RectObstacle::new(
+            Obstacle::new(RectObstacle::new(
                 vec2(0., -rect.height() + y_off),
                 Self::SLOPE_ANGLE,
                 vec2(rect.width(), rect.height() * 0.5),
                 0.,
-            )
+            ))
         };
         match obs {
             Obstacles::Snake => {
                 const OFFSET: f32 = PARTICLE_RENDER_RADIUS / SCALE;
                 vec![
-                    RectObstacle::new(
+                    Obstacle::new(RectObstacle::new(
                         vec2(-rect.width() * 0.25 - OFFSET, rect.height() / 4.),
                         Self::SLOPE_ANGLE,
                         vec2(rect.width() * 0.3, 2.),
                         0.,
-                    ),
-                    RectObstacle::new(
+                    )),
+                    Obstacle::new(RectObstacle::new(
                         vec2(rect.width() * 0.25 + OFFSET, -rect.height() / 4.),
                         -Self::SLOPE_ANGLE,
                         vec2(rect.width() * 0.3, 2.),
                         0.,
-                    ),
+                    )),
                 ]
             }
             Obstacles::Slope => {
@@ -237,8 +364,24 @@ impl RusHydroApp {
                 let axis = vec2(0., rect.height() * 0.1);
                 vec![
                     gen_slope(),
-                    RectObstacle::new(axis, 0., vec2(2., rect.height() * 0.4), 1e4)
-                        .with_pivot(Vec2::ZERO),
+                    Obstacle::new_compound(
+                        vec![
+                            ObstacleShape::Rect(RectObstacle::new(
+                                Vec2::ZERO,
+                                0.,
+                                vec2(2., rect.height() * 0.4),
+                                1e4,
+                            )),
+                            ObstacleShape::Rect(RectObstacle::new(
+                                Vec2::ZERO,
+                                std::f32::consts::PI * 0.5,
+                                vec2(2., rect.height() * 0.4),
+                                1e4,
+                            )),
+                        ],
+                        axis,
+                    )
+                    .with_pivot(Vec2::ZERO),
                 ]
             }
             _ => vec![],

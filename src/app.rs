@@ -18,7 +18,7 @@ use eframe::{
 use rand::{thread_rng, Rng};
 
 use self::{
-    obstacle::{Obstacles, RectObstacle},
+    obstacle::{Obstacle, Obstacles},
     particles::Particle,
 };
 
@@ -91,7 +91,7 @@ pub struct RusHydroApp {
     neighbor_mode: NeighborMode,
     neighbor_payload: NeighborPayload,
     obstacle_select: Obstacles,
-    obstacles: Vec<RectObstacle>,
+    obstacles: Vec<Obstacle>,
     paused: bool,
     show_particles: bool,
     show_surface: bool,
@@ -392,14 +392,15 @@ impl RusHydroApp {
             }
 
             for obstacle in &self.obstacles {
-                let points = obstacle
-                    .shrink(PARTICLE_RENDER_RADIUS / SCALE)
-                    .vertices()
-                    .into_iter()
-                    .map(to_pos2)
-                    .collect();
-                let shape = PathShape::convex_polygon(points, Color32::WHITE, (1., Color32::BLACK));
-                painter.add(shape);
+                obstacle.foreach_shape(
+                    &mut |points| {
+                        let points = points.iter().copied().map(to_pos2).collect();
+                        let shape =
+                            PathShape::convex_polygon(points, Color32::WHITE, (1., Color32::BLACK));
+                        painter.add(shape);
+                    },
+                    -PARTICLE_RENDER_RADIUS / SCALE,
+                );
             }
 
             let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);
