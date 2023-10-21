@@ -6,6 +6,10 @@ Try it on your browser! https://msakuta.github.io/rushydro/
 
 ![screenshot](images/screenshot00.png)
 
+https://github.com/msakuta/rushydro/assets/2798715/97aecdee-ec10-4994-9bd3-7013f273e2cd
+
+
+
 ## What is this?
 
 This is a sister project of [cfd-wasm](https://github.com/msakuta/cfd-wasm), a fluid simulator in Rust.
