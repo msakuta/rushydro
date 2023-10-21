@@ -510,7 +510,10 @@ impl RusHydroApp {
                 .radio_value(&mut self.obstacle_select, Obstacles::None, "None")
                 .changed();
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::S, "S shape")
+                .radio_value(&mut self.obstacle_select, Obstacles::Snake, "Snake")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::Slope, "Slope")
                 .changed();
         });
         ui.group(|ui| {

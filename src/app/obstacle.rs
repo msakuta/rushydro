@@ -5,7 +5,8 @@ use super::{RusHydroApp, PARTICLE_RENDER_RADIUS, SCALE};
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Obstacles {
     None,
-    S,
+    Snake,
+    Slope,
 }
 
 pub(super) struct Obstacle {
@@ -21,11 +22,11 @@ impl Obstacle {
         }
     }
 
-    pub fn offset(&self) -> Vec2 {
+    pub fn _offset(&self) -> Vec2 {
         self.transform.offset
     }
 
-    pub fn halfsize(&self) -> Vec2 {
+    pub fn _halfsize(&self) -> Vec2 {
         self.halfsize
     }
 
@@ -127,23 +128,34 @@ impl Transform {
 }
 
 impl RusHydroApp {
+    pub(super) const SLOPE_ANGLE: f32 = std::f32::consts::PI * 0.075;
+
     pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<Obstacle> {
-        if matches!(obs, Obstacles::S) {
-            const OFFSET: f32 = PARTICLE_RENDER_RADIUS / SCALE;
-            vec![
-                Obstacle::new(
-                    vec2(-rect.width() * 0.25 - OFFSET, rect.height() / 4.),
-                    0.,
-                    vec2(rect.width() * 0.25, 2.),
-                ),
-                Obstacle::new(
-                    vec2(rect.width() * 0.25 + OFFSET, -rect.height() / 4.),
-                    0.,
-                    vec2(rect.width() * 0.25, 2.),
-                ),
-            ]
-        } else {
-            vec![]
+        match obs {
+            Obstacles::Snake => {
+                const OFFSET: f32 = PARTICLE_RENDER_RADIUS / SCALE;
+                vec![
+                    Obstacle::new(
+                        vec2(-rect.width() * 0.25 - OFFSET, rect.height() / 4.),
+                        0.,
+                        vec2(rect.width() * 0.25, 2.),
+                    ),
+                    Obstacle::new(
+                        vec2(rect.width() * 0.25 + OFFSET, -rect.height() / 4.),
+                        0.,
+                        vec2(rect.width() * 0.25, 2.),
+                    ),
+                ]
+            }
+            Obstacles::Slope => {
+                let y_off = rect.width() * 0.5 * Self::SLOPE_ANGLE.sin();
+                vec![Obstacle::new(
+                    vec2(0., -rect.height() + y_off),
+                    Self::SLOPE_ANGLE,
+                    vec2(rect.width(), rect.height() * 0.5),
+                )]
+            }
+            _ => vec![],
         }
     }
 }
