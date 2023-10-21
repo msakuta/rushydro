@@ -250,7 +250,7 @@ impl RusHydroApp {
                     }
                 }
                 Obstacles::Slope => {
-                    if self.rect.max.x - PARTICLE_RADIUS * 2. < croppos.x {
+                    if self.rect.max.x - PARTICLE_RADIUS < croppos.x {
                         croppos.x = self.rect.min.x + PARTICLE_RADIUS * 0.5;
                         croppos.y += self.rect.width() * Self::SLOPE_ANGLE.sin();
                         velo *= 0.5;

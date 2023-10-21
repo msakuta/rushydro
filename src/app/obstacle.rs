@@ -128,7 +128,7 @@ impl Transform {
 }
 
 impl RusHydroApp {
-    pub(super) const SLOPE_ANGLE: f32 = std::f32::consts::PI * 0.075;
+    pub(super) const SLOPE_ANGLE: f32 = std::f32::consts::PI * 0.05;
 
     pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<Obstacle> {
         match obs {
@@ -137,13 +137,13 @@ impl RusHydroApp {
                 vec![
                     Obstacle::new(
                         vec2(-rect.width() * 0.25 - OFFSET, rect.height() / 4.),
-                        0.,
-                        vec2(rect.width() * 0.25, 2.),
+                        Self::SLOPE_ANGLE,
+                        vec2(rect.width() * 0.3, 2.),
                     ),
                     Obstacle::new(
                         vec2(rect.width() * 0.25 + OFFSET, -rect.height() / 4.),
-                        0.,
-                        vec2(rect.width() * 0.25, 2.),
+                        -Self::SLOPE_ANGLE,
+                        vec2(rect.width() * 0.3, 2.),
                     ),
                 ]
             }
