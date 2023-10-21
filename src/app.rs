@@ -18,7 +18,7 @@ use eframe::{
 use rand::{thread_rng, Rng};
 
 use self::{
-    obstacle::{Obstacle, Obstacles},
+    obstacle::{Obstacles, RectObstacle},
     particles::Particle,
 };
 
@@ -91,7 +91,7 @@ pub struct RusHydroApp {
     neighbor_mode: NeighborMode,
     neighbor_payload: NeighborPayload,
     obstacle_select: Obstacles,
-    obstacles: Vec<Obstacle>,
+    obstacles: Vec<RectObstacle>,
     paused: bool,
     show_particles: bool,
     show_surface: bool,
@@ -515,6 +515,9 @@ impl RusHydroApp {
             map_changed |= ui
                 .radio_value(&mut self.obstacle_select, Obstacles::Slope, "Slope")
                 .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::WaterMill, "Watermill")
+                .changed();
         });
         ui.group(|ui| {
             ui.label("Neighbor search:");
@@ -604,6 +607,7 @@ impl eframe::App for RusHydroApp {
 
         if !self.paused {
             self.update_particles();
+            self.update_obstacles(1.);
         }
 
         egui::SidePanel::right("side_panel")

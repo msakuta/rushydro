@@ -223,10 +223,14 @@ impl RusHydroApp {
                 newpos.x.min(self.rect.max.x).max(self.rect.min.x),
                 newpos.y.min(self.rect.max.y).max(self.rect.min.y),
             );
-            for obstacle in &self.obstacles {
-                if let Some((dist, normal)) = obstacle.hit_test(newpos) {
-                    croppos -= normal * dist;
-                    velo -= normal * normal.dot(velo) * (1. + self.restitution);
+            for obstacle in &mut self.obstacles {
+                if let Some(result) = obstacle.hit_test(newpos) {
+                    croppos -= result.normal * result.dist;
+                    let impulse = result.normal
+                        * result.normal.dot(velo - result.velo)
+                        * (1. + self.restitution);
+                    velo -= impulse;
+                    obstacle.apply_impulse(impulse, newpos);
                 }
             }
             if newpos.x < self.rect.min.x && velo.x < 0. {
@@ -249,7 +253,7 @@ impl RusHydroApp {
                         velo.x = -velo.x;
                     }
                 }
-                Obstacles::Slope => {
+                Obstacles::Slope | Obstacles::WaterMill => {
                     if self.rect.max.x - PARTICLE_RADIUS < croppos.x {
                         croppos.x = self.rect.min.x + PARTICLE_RADIUS * 0.5;
                         croppos.y += self.rect.width() * Self::SLOPE_ANGLE.sin();
