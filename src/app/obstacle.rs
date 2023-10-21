@@ -19,6 +19,7 @@ pub(super) struct RectObstacle {
     /// Moment of Inertia, kg * m^2
     moi: f32,
     pivot: Option<Vec2>,
+    sense_gravity: bool,
 }
 
 impl RectObstacle {
@@ -31,12 +32,20 @@ impl RectObstacle {
             mass,
             moi: mass / 12. * (halfsize.x.powi(2) + halfsize.y.powi(2)),
             pivot: None,
+            sense_gravity: false,
         }
     }
 
     pub fn with_pivot(self, pivot: Vec2) -> Self {
         Self {
             pivot: Some(pivot),
+            ..self
+        }
+    }
+
+    pub fn _with_gravity(self) -> Self {
+        Self {
+            sense_gravity: true,
             ..self
         }
     }
@@ -67,7 +76,9 @@ impl RectObstacle {
 
     pub fn update(&mut self, gravity: f32, delta_time: f32) {
         if self.mass != 0. {
-            // self.velo.y -= gravity * delta_time;
+            if self.sense_gravity {
+                self.velo.y -= gravity * delta_time;
+            }
             self.transform.offset += self.velo * delta_time;
             self.transform.rotation += self.angular_velo * delta_time;
         }
