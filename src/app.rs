@@ -469,13 +469,32 @@ impl RusHydroApp {
             self.reset();
         }
         ui.checkbox(&mut self.paused, "Paused");
+        let mut map_changed = false;
+        ui.group(|ui| {
+            ui.label("Environment:");
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::None, "None")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::Snake, "Snake")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::Slope, "Slope")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::WaterMill, "Watermill")
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Obstacles::Capillary, "Capillary")
+                .changed();
+        });
         ui.label("Num particles (needs reset):");
         ui.add(egui::widgets::Slider::new(
             &mut self.num_particles,
             1..=15000,
         ));
         ui.label("Width:");
-        let mut map_changed = if ui
+        if ui
             .add(egui::widgets::Slider::new(
                 &mut self.rect.max.x,
                 1.0..=100.0,
@@ -483,10 +502,8 @@ impl RusHydroApp {
             .changed()
         {
             self.rect.min.x = -self.rect.max.x;
-            true
-        } else {
-            false
-        };
+            map_changed = true;
+        }
         ui.label("Height:");
         if ui
             .add(egui::widgets::Slider::new(
@@ -527,21 +544,6 @@ impl RusHydroApp {
             &mut self.mouse_effect_radius,
             (0.)..=10.,
         ));
-        ui.group(|ui| {
-            ui.label("Obstacles:");
-            map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::None, "None")
-                .changed();
-            map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::Snake, "Snake")
-                .changed();
-            map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::Slope, "Slope")
-                .changed();
-            map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::WaterMill, "Watermill")
-                .changed();
-        });
         ui.group(|ui| {
             ui.label("Neighbor search:");
             ui.radio_value(

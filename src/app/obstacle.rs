@@ -8,6 +8,7 @@ pub(crate) enum Obstacles {
     Snake,
     Slope,
     WaterMill,
+    Capillary,
 }
 
 pub(super) struct Obstacle {
@@ -425,7 +426,26 @@ impl RusHydroApp {
                         ],
                         axis,
                     )
-                    .with_pivot(Vec2::ZERO)
+                    .with_pivot(Vec2::ZERO),
+                ]
+            }
+            Obstacles::Capillary => {
+                const GAP: f32 = 2.;
+                const WALL_THICKNESS: f32 = 2.;
+                vec![
+                    Obstacle::new(RectObstacle::new(
+                        vec2(-WALL_THICKNESS - GAP, 0.),
+                        0.,
+                        vec2(WALL_THICKNESS, rect.height() / 4.),
+                        0.,
+                    ))
+                    .with_hydrophilic(true),
+                    Obstacle::new(RectObstacle::new(
+                        vec2(WALL_THICKNESS + GAP, 0.),
+                        0.,
+                        vec2(WALL_THICKNESS, rect.height() / 4.),
+                        0.,
+                    ))
                     .with_hydrophilic(true),
                 ]
             }
