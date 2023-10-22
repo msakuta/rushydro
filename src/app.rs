@@ -60,6 +60,18 @@ enum NeighborPayload {
     },
 }
 
+struct HashMapTime {
+    hash: f64,
+    update: f64,
+}
+
+struct SortMapTime {
+    hash: f64,
+    sort: f64,
+    find: f64,
+    update: f64,
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 struct HashEntry {
     particle_idx: usize,
@@ -103,9 +115,10 @@ pub struct RusHydroApp {
     show_grid_count: bool,
     color_by_speed: bool,
     show_time_plot: bool,
+    show_time_plot_breakdown: bool,
     time_history: VecDeque<f64>,
-    hash_time_history: VecDeque<f64>,
-    sort_time_history: VecDeque<(f64, f64)>,
+    hash_time_history: VecDeque<HashMapTime>,
+    sort_time_history: VecDeque<SortMapTime>,
     density_resolution: f32,
     density_radius: f32,
     density_map: Vec<f32>,
@@ -143,7 +156,7 @@ impl RusHydroApp {
             gravity: G,
             mouse_down: None,
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
-            neighbor_mode: NeighborMode::HashMap,
+            neighbor_mode: NeighborMode::SortMap,
             neighbor_payload: NeighborPayload::BruteForce,
             paused: false,
             obstacle_select: Environment::None,
@@ -157,6 +170,7 @@ impl RusHydroApp {
             show_grid_count: false,
             color_by_speed: true,
             show_time_plot: false,
+            show_time_plot_breakdown: false,
             time_history: VecDeque::new(),
             hash_time_history: VecDeque::new(),
             sort_time_history: VecDeque::new(),
@@ -593,48 +607,62 @@ impl RusHydroApp {
         ui.checkbox(&mut self.show_grid_count, "Show grid count");
         ui.checkbox(&mut self.color_by_speed, "Color by speed");
         ui.checkbox(&mut self.show_time_plot, "Show time plot");
+        ui.checkbox(
+            &mut self.show_time_plot_breakdown,
+            "Show time plot breakdown",
+        );
     }
 
     fn plot_time(&mut self, ui: &mut Ui) {
+        fn to_plot_points<T>(history: &VecDeque<T>, getter: impl Fn(&T) -> f64) -> PlotPoints {
+            history
+                .iter()
+                .enumerate()
+                .map(|(t, v)| [t as f64, getter(v)])
+                .collect()
+        }
+
         let plot = Plot::new("plot");
         plot.legend(Legend::default()).show(ui, |plot_ui| {
-            let gen_line = |points, i, name| {
-                Line::new(points)
-                    .color(eframe::egui::Color32::from_rgb(
-                        (i % 2 * 200) as u8,
-                        (i % 4 * 200) as u8,
-                        (i % 8 * 100) as u8,
-                    ))
-                    .name(name)
+            let mut counter = 0;
+            let mut gen_line = |points, name| {
+                counter += 1;
+                plot_ui.line(
+                    Line::new(points)
+                        .color(eframe::egui::Color32::from_rgb(
+                            (counter % 2 * 200) as u8,
+                            (counter % 4 * 200) as u8,
+                            (counter % 8 * 100) as u8,
+                        ))
+                        .name(name),
+                );
             };
-            let points: PlotPoints = self
-                .time_history
-                .iter()
-                .enumerate()
-                .map(|(t, v)| [t as f64, *v])
-                .collect();
-            plot_ui.line(gen_line(points, 0, "BruteForce time"));
-            let points: PlotPoints = self
-                .hash_time_history
-                .iter()
-                .enumerate()
-                .map(|(t, v)| [t as f64, *v])
-                .collect();
-            plot_ui.line(gen_line(points, 1, "HashMap time"));
-            let hash_points: PlotPoints = self
-                .sort_time_history
-                .iter()
-                .enumerate()
-                .map(|(t, v)| [t as f64, v.0])
-                .collect();
-            let sort_points: PlotPoints = self
-                .sort_time_history
-                .iter()
-                .enumerate()
-                .map(|(t, v)| [t as f64, v.1])
-                .collect();
-            plot_ui.line(gen_line(hash_points, 2, "SortMap Hash time"));
-            plot_ui.line(gen_line(sort_points, 3, "SortMap sort time"));
+            let points = to_plot_points(&self.time_history, |v| *v);
+            gen_line(points, "BruteForce Time");
+
+            if self.show_time_plot_breakdown {
+                let hash_points = to_plot_points(&self.hash_time_history, |s| s.hash);
+                gen_line(hash_points, "HashMap Hash Time");
+                let update_points = to_plot_points(&self.hash_time_history, |s| s.update);
+                gen_line(update_points, "HashMap Update Time");
+            }
+            let hash_total_points = to_plot_points(&self.hash_time_history, |s| s.hash + s.update);
+            gen_line(hash_total_points, "HashMap Total Time");
+
+            if self.show_time_plot_breakdown {
+                let hash_points = to_plot_points(&self.sort_time_history, |s| s.hash);
+                gen_line(hash_points, "SortMap Hash time");
+                let find_points = to_plot_points(&self.sort_time_history, |s| s.find);
+                gen_line(find_points, "SortMap Find time");
+                let sort_points = to_plot_points(&self.sort_time_history, |s| s.sort);
+                gen_line(sort_points, "SortMap Sort time");
+                let update_points = to_plot_points(&self.sort_time_history, |s| s.update);
+                gen_line(update_points, "SortMap Update time");
+            }
+            let sort_total_points = to_plot_points(&self.sort_time_history, |s| {
+                s.hash + s.find + s.sort + s.update
+            });
+            gen_line(sort_total_points, "SortMap total time");
         });
     }
 }

@@ -128,7 +128,7 @@ impl RusHydroApp {
                 }
             }
             NeighborPayload::HashMap(ref mut hash_map) => {
-                let (_, time) = measure_time(|| {
+                let (_, hash_time) = measure_time(|| {
                     hash_map.clear();
                     for (i, particle_i) in self.particles.iter().enumerate() {
                         let pos = particle_i.pos.get();
@@ -139,36 +139,41 @@ impl RusHydroApp {
                         hash_map.entry(grid_pos).or_default().push(i);
                     }
                 });
-                self.hash_time_history.push_back(time);
-                if MAX_HISTORY < self.hash_time_history.len() {
-                    self.hash_time_history.pop_front();
-                }
 
-                for (i, particle_i) in self.particles.iter().enumerate() {
-                    let pos = particle_i.pos.get();
-                    let grid_pos = (
-                        pos.x.div_euclid(CELL_SIZE) as i32,
-                        pos.y.div_euclid(CELL_SIZE) as i32,
-                    );
-                    for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
-                        for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
-                            let Some(cell) = hash_map.get(&(cx, cy)) else {
-                                continue;
-                            };
-                            for &j in cell {
-                                if i == j {
+                let (_, update_time) = measure_time(|| {
+                    for (i, particle_i) in self.particles.iter().enumerate() {
+                        let pos = particle_i.pos.get();
+                        let grid_pos = (
+                            pos.x.div_euclid(CELL_SIZE) as i32,
+                            pos.y.div_euclid(CELL_SIZE) as i32,
+                        );
+                        for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                            for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                                let Some(cell) = hash_map.get(&(cx, cy)) else {
                                     continue;
+                                };
+                                for &j in cell {
+                                    if i == j {
+                                        continue;
+                                    }
+                                    let particle_j = &self.particles[j];
+                                    Self::update_speed(particle_i, particle_j, &self.params);
                                 }
-                                let particle_j = &self.particles[j];
-                                Self::update_speed(particle_i, particle_j, &self.params);
                             }
                         }
+                        Self::update_speed_from_obstacles(
+                            &mut self.obstacles,
+                            particle_i,
+                            &self.params,
+                        );
                     }
-                    Self::update_speed_from_obstacles(
-                        &mut self.obstacles,
-                        particle_i,
-                        &self.params,
-                    );
+                });
+                self.hash_time_history.push_back(super::HashMapTime {
+                    hash: hash_time,
+                    update: update_time,
+                });
+                if MAX_HISTORY < self.hash_time_history.len() {
+                    self.hash_time_history.pop_front();
                 }
             }
             NeighborPayload::SortMap {
@@ -180,68 +185,80 @@ impl RusHydroApp {
                         as usize
                 };
                 let (_, hash_time) = measure_time(|| {
-                    for (i, particle_i) in self.particles.iter().enumerate() {
+                    for (i, (particle_i, hash_entry)) in
+                        self.particles.iter().zip(hash_table.iter_mut()).enumerate()
+                    {
                         let pos = particle_i.pos.get();
                         let grid_pos = (
                             pos.x.div_euclid(CELL_SIZE) as i32,
                             pos.y.div_euclid(CELL_SIZE) as i32,
                         );
                         let cell_hash = hasher(grid_pos);
-                        hash_table[i] = HashEntry {
-                            particle_idx: i,
-                            cell_hash,
-                        };
+                        hash_entry.particle_idx = i;
+                        hash_entry.cell_hash = cell_hash;
                     }
                 });
                 let (_, sort_time) = measure_time(|| {
                     hash_table.sort_unstable_by_key(|entry| entry.cell_hash);
+                });
+                let (_, find_time) = measure_time(|| {
                     for i in 0..self.particles.len() {
-                        let first = hash_table
-                            .iter()
-                            .enumerate()
-                            .find(|(_, p)| p.cell_hash == i);
-                        if let Some(first) = first {
-                            start_offsets[i] = first.0;
+                        let first = hash_table.binary_search_by_key(&i, |entry| entry.cell_hash);
+                        if let Ok(first) = first {
+                            start_offsets[i] = 0;
+                            for j in (0..=first).rev() {
+                                if hash_table[j].cell_hash != i {
+                                    start_offsets[i] = j + 1;
+                                    break;
+                                }
+                            }
                         }
                     }
                 });
-                self.sort_time_history.push_back((hash_time, sort_time));
-                if MAX_HISTORY < self.sort_time_history.len() {
-                    self.sort_time_history.pop_front();
-                }
 
-                for (i, particle_i) in self.particles.iter().enumerate() {
-                    let pos = particle_i.pos.get();
-                    let grid_pos = (
-                        pos.x.div_euclid(CELL_SIZE) as i32,
-                        pos.y.div_euclid(CELL_SIZE) as i32,
-                    );
-                    for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
-                        for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
-                            let cell_hash = hasher((cx, cy));
-                            let Some(&cell_start) = start_offsets.get(cell_hash) else {
-                                continue;
-                            };
-                            if cell_start == usize::MAX {
-                                continue;
-                            }
-                            for entry in &hash_table[cell_start..] {
-                                if i == entry.particle_idx {
+                let (_, update_time) = measure_time(|| {
+                    for (i, particle_i) in self.particles.iter().enumerate() {
+                        let pos = particle_i.pos.get();
+                        let grid_pos = (
+                            pos.x.div_euclid(CELL_SIZE) as i32,
+                            pos.y.div_euclid(CELL_SIZE) as i32,
+                        );
+                        for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                            for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                                let cell_hash = hasher((cx, cy));
+                                let Some(&cell_start) = start_offsets.get(cell_hash) else {
+                                    continue;
+                                };
+                                if cell_start == usize::MAX {
                                     continue;
                                 }
-                                if entry.cell_hash != cell_hash {
-                                    break;
+                                for entry in &hash_table[cell_start..] {
+                                    if i == entry.particle_idx {
+                                        continue;
+                                    }
+                                    if entry.cell_hash != cell_hash {
+                                        break;
+                                    }
+                                    let particle_j = &self.particles[entry.particle_idx];
+                                    Self::update_speed(particle_i, particle_j, &self.params);
                                 }
-                                let particle_j = &self.particles[entry.particle_idx];
-                                Self::update_speed(particle_i, particle_j, &self.params);
                             }
                         }
+                        Self::update_speed_from_obstacles(
+                            &mut self.obstacles,
+                            particle_i,
+                            &self.params,
+                        );
                     }
-                    Self::update_speed_from_obstacles(
-                        &mut self.obstacles,
-                        particle_i,
-                        &self.params,
-                    );
+                });
+                self.sort_time_history.push_back(super::SortMapTime {
+                    hash: hash_time,
+                    find: find_time,
+                    sort: sort_time,
+                    update: update_time,
+                });
+                if MAX_HISTORY < self.sort_time_history.len() {
+                    self.sort_time_history.pop_front();
                 }
             }
         }
