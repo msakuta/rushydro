@@ -10,6 +10,7 @@ pub(crate) enum Environment {
     WaterMill,
     Capillary,
     Buoy,
+    Convection,
 }
 
 pub(super) struct Obstacle {

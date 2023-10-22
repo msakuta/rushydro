@@ -136,6 +136,7 @@ impl RusHydroApp {
                     rng.gen_range(rect.min.y..rect.max.y),
                 )),
                 velo: Cell::new(Vec2::ZERO),
+                temp: Cell::new(0.),
             })
             .collect();
         let density_resolution = DENSITY_RESOLUTION;
@@ -466,7 +467,8 @@ impl RusHydroApp {
                         let speed_u8 = (speed * 255.) as u8;
                         Color32::from_rgb(speed_u8, 0, 255 - speed_u8)
                     } else {
-                        Color32::BLUE
+                        let temp_u8 = (particle.temp.get().min(1.) * 255.) as u8;
+                        Color32::from_rgb(temp_u8, 0, 255 - temp_u8)
                     };
                     painter.circle_filled(
                         to_pos2(particle.pos.get().to_pos2()),
@@ -511,6 +513,13 @@ impl RusHydroApp {
                 .changed();
             map_changed |= ui
                 .radio_value(&mut self.obstacle_select, Environment::Buoy, "Buoy")
+                .changed();
+            map_changed |= ui
+                .radio_value(
+                    &mut self.obstacle_select,
+                    Environment::Convection,
+                    "Convection",
+                )
                 .changed();
         });
         ui.label("Num particles (needs reset):");

@@ -12,6 +12,7 @@ use crate::measure_time;
 pub(super) struct Particle {
     pub pos: Cell<Vec2>,
     pub velo: Cell<Vec2>,
+    pub temp: Cell<f32>,
 }
 
 impl RusHydroApp {
@@ -24,6 +25,7 @@ impl RusHydroApp {
                     rng.gen_range(self.rect.min.y..self.rect.max.y),
                 )),
                 velo: Cell::new(Vec2::ZERO),
+                temp: Cell::new(0.),
             })
             .collect();
         self.particles = particles;
@@ -31,8 +33,9 @@ impl RusHydroApp {
         self.neighbor_payload = NeighborPayload::BruteForce;
     }
 
-    fn repulsion_func(dist: f32, params: &Params) -> f32 {
-        let f = (1. - dist / PARTICLE_RADIUS).powf(2.);
+    fn repulsion_func(dist: f32, params: &Params, temp: f32) -> f32 {
+        let radius = PARTICLE_RADIUS * (1.0 + 0.5 * temp);
+        let f = (1. - dist / radius).powf(2.);
         1. / dist
             * (if f < params.surface_tension_threshold {
                 (f - params.surface_tension_threshold) * params.surface_tension
@@ -51,7 +54,8 @@ impl RusHydroApp {
         let dist2 = delta.length_sq();
         if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
             let dist = dist2.sqrt();
-            let repulsion = delta * Self::repulsion_func(dist, params);
+            let repulsion = delta
+                * Self::repulsion_func(dist, params, particle_i.temp.get() + particle_j.temp.get());
             particle_i.velo.set(
                 velo_i
                     + repulsion * params.repulsion_force
@@ -61,6 +65,16 @@ impl RusHydroApp {
                 velo_j - repulsion * params.repulsion_force
                     + (average_velo - velo_j) * params.viscosity,
             );
+            let heat_conduction = 1. - dist / PARTICLE_RADIUS;
+            let temp_i = particle_i.temp.get();
+            let temp_j = particle_j.temp.get();
+            let average_temp = (temp_i + temp_j) / 2.;
+            particle_i
+                .temp
+                .set(temp_i + (average_temp - temp_i) * heat_conduction * 0.1);
+            particle_j
+                .temp
+                .set(temp_j + (average_temp - temp_j) * heat_conduction * 0.1);
         }
     }
 
@@ -77,7 +91,8 @@ impl RusHydroApp {
             }
             if let Some(result) = obstacle.distance(pos) {
                 if 0. < result.dist && result.dist < PARTICLE_RADIUS {
-                    let impulse = result.normal * Self::repulsion_func(result.dist, params);
+                    let impulse = result.normal
+                        * Self::repulsion_func(result.dist, params, particle.temp.get());
                     velo = impulse;
                     obstacle.apply_impulse(-impulse, pos);
                 }
@@ -273,7 +288,7 @@ impl RusHydroApp {
             }
         }
 
-        for particle in &self.particles {
+        for particle in &mut self.particles {
             let pos = particle.pos.get();
             let mut velo = particle.velo.get();
             velo.y -= self.gravity;
@@ -303,6 +318,14 @@ impl RusHydroApp {
             }
             if self.rect.max.y < newpos.y && 0. < velo.y {
                 velo.y = -velo.y * self.restitution;
+            }
+            if matches!(self.obstacle_select, Environment::Convection)
+                && newpos.y < self.rect.min.y + 4.
+                && newpos.x.abs() < self.rect.width() * 0.25
+            {
+                particle.temp.set((particle.temp.get() + 0.005).min(1.));
+            } else {
+                particle.temp.set((particle.temp.get() - 0.0005).max(0.));
             }
             match self.obstacle_select {
                 Environment::Snake => {
