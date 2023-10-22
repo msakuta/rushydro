@@ -18,7 +18,7 @@ use eframe::{
 use rand::{thread_rng, Rng};
 
 use self::{
-    obstacle::{Obstacle, Obstacles},
+    obstacle::{Environment, Obstacle},
     particles::Particle,
 };
 
@@ -90,7 +90,7 @@ pub struct RusHydroApp {
     mouse_effect_radius: f32,
     neighbor_mode: NeighborMode,
     neighbor_payload: NeighborPayload,
-    obstacle_select: Obstacles,
+    obstacle_select: Environment,
     obstacles: Vec<Obstacle>,
     paused: bool,
     show_particles: bool,
@@ -126,7 +126,7 @@ impl RusHydroApp {
             })
             .collect();
         let density_resolution = DENSITY_RESOLUTION;
-        let obstacle_select = Obstacles::None;
+        let obstacle_select = Environment::None;
         let obstacles = Self::gen_obstacles(&rect, obstacle_select);
         let (density_map, density_shape) = Self::gen_board(&rect, density_resolution);
         Self {
@@ -146,7 +146,7 @@ impl RusHydroApp {
             neighbor_mode: NeighborMode::HashMap,
             neighbor_payload: NeighborPayload::BruteForce,
             paused: false,
-            obstacle_select: Obstacles::None,
+            obstacle_select: Environment::None,
             obstacles,
             show_particles: true,
             show_surface: true,
@@ -473,19 +473,30 @@ impl RusHydroApp {
         ui.group(|ui| {
             ui.label("Environment:");
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::None, "None")
+                .radio_value(&mut self.obstacle_select, Environment::None, "None")
                 .changed();
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::Snake, "Snake")
+                .radio_value(&mut self.obstacle_select, Environment::Snake, "Snake")
                 .changed();
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::Slope, "Slope")
+                .radio_value(&mut self.obstacle_select, Environment::Slope, "Slope")
                 .changed();
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::WaterMill, "Watermill")
+                .radio_value(
+                    &mut self.obstacle_select,
+                    Environment::WaterMill,
+                    "Watermill",
+                )
                 .changed();
             map_changed |= ui
-                .radio_value(&mut self.obstacle_select, Obstacles::Capillary, "Capillary")
+                .radio_value(
+                    &mut self.obstacle_select,
+                    Environment::Capillary,
+                    "Capillary",
+                )
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Environment::Buoy, "Buoy")
                 .changed();
         });
         ui.label("Num particles (needs reset):");

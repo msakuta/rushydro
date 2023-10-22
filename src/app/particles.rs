@@ -3,7 +3,7 @@ use rand::{thread_rng, Rng};
 use std::{cell::Cell, collections::HashMap};
 
 use super::{
-    obstacle::{Obstacle, Obstacles},
+    obstacle::{Environment, Obstacle},
     HashEntry, NeighborMode, NeighborPayload, Params, RusHydroApp, CELL_SIZE, MAX_HISTORY,
     PARTICLE_RADIUS, PARTICLE_RADIUS2,
 };
@@ -288,14 +288,14 @@ impl RusHydroApp {
                 velo.y = -velo.y * self.restitution;
             }
             match self.obstacle_select {
-                Obstacles::Snake => {
+                Environment::Snake => {
                     if self.rect.max.x / 2. < croppos.x && croppos.y < self.rect.min.y + 1. {
                         croppos.x = -croppos.x;
                         croppos.y = self.rect.max.y - 1.;
                         velo.x = -velo.x;
                     }
                 }
-                Obstacles::Slope | Obstacles::WaterMill => {
+                Environment::Slope | Environment::WaterMill => {
                     if self.rect.max.x - PARTICLE_RADIUS < croppos.x {
                         croppos.x = self.rect.min.x + PARTICLE_RADIUS * 0.5;
                         croppos.y += self.rect.width() * Self::SLOPE_ANGLE.sin();

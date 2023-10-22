@@ -3,12 +3,13 @@ use eframe::epaint::{pos2, vec2, Pos2, Rect, Vec2};
 use super::{RusHydroApp, PARTICLE_RENDER_RADIUS, SCALE};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum Obstacles {
+pub(crate) enum Environment {
     None,
     Snake,
     Slope,
     WaterMill,
     Capillary,
+    Buoy,
 }
 
 pub(super) struct Obstacle {
@@ -22,6 +23,24 @@ pub(super) struct Obstacle {
     pivot: Option<Vec2>,
     sense_gravity: bool,
     hydrophilic: bool,
+    constrain_rect: bool,
+}
+
+impl Default for Obstacle {
+    fn default() -> Self {
+        Self {
+            shape: ObstacleShape::Compound(vec![]),
+            transform: Transform::default(),
+            velo: Vec2::ZERO,
+            angular_velo: 0.,
+            mass: 0.,
+            moi: 0.,
+            pivot: None,
+            sense_gravity: false,
+            hydrophilic: false,
+            constrain_rect: false,
+        }
+    }
 }
 
 pub(super) enum ObstacleShape {
@@ -35,14 +54,9 @@ impl Obstacle {
         let moi = ro.moi();
         Self {
             shape: ObstacleShape::Rect(ro),
-            transform: Transform::default(),
-            velo: Vec2::ZERO,
-            angular_velo: 0.,
             mass,
             moi,
-            pivot: None,
-            sense_gravity: false,
-            hydrophilic: false,
+            ..Self::default()
         }
     }
 
@@ -62,13 +76,9 @@ impl Obstacle {
                 offset: pos,
                 rotation: 0.,
             },
-            velo: Vec2::ZERO,
-            angular_velo: 0.,
             mass,
             moi,
-            pivot: None,
-            sense_gravity: false,
-            hydrophilic: false,
+            ..Self::default()
         }
     }
 
@@ -79,7 +89,7 @@ impl Obstacle {
         }
     }
 
-    pub fn _with_gravity(self) -> Self {
+    pub fn with_gravity(self) -> Self {
         Self {
             sense_gravity: true,
             ..self
@@ -89,6 +99,13 @@ impl Obstacle {
     pub fn with_hydrophilic(self, v: bool) -> Self {
         Self {
             hydrophilic: v,
+            ..self
+        }
+    }
+
+    pub fn with_constrain_rect(self, v: bool) -> Self {
+        Self {
+            constrain_rect: v,
             ..self
         }
     }
@@ -142,13 +159,28 @@ impl Obstacle {
             })
     }
 
-    pub fn update(&mut self, gravity: f32, delta_time: f32) {
+    pub fn update(&mut self, rect: &Rect, gravity: f32, delta_time: f32) {
         if self.mass != 0. {
             if self.sense_gravity {
                 self.velo.y -= gravity * delta_time;
             }
             self.transform.offset += self.velo * delta_time;
+
+            // TODO: Collision detection and response with rectangles or even compounds are not so easy.
+            // For now we constrain only the center of gravity, which is totally inaccurate.
+            if self.constrain_rect {
+                if self.transform.offset.x < rect.min.x || rect.max.x < self.transform.offset.x {
+                    self.velo.x = 0.;
+                }
+                self.transform.offset.x = self.transform.offset.x.min(rect.max.x).max(rect.min.x);
+                if self.transform.offset.y < rect.min.y || rect.max.y < self.transform.offset.y {
+                    self.velo.y = 0.;
+                }
+                self.transform.offset.y = self.transform.offset.y.min(rect.max.y).max(rect.min.y);
+            }
+
             self.transform.rotation += self.angular_velo * delta_time;
+            self.angular_velo *= (-delta_time * 0.1).exp();
         }
     }
 
@@ -156,10 +188,9 @@ impl Obstacle {
         if self.mass != 0. {
             if self.pivot.is_none() {
                 self.velo += impulse / self.mass;
-            } else {
-                let moment = cross(pos - self.transform.offset, impulse);
-                self.angular_velo += moment / self.moi;
             }
+            let moment = cross(pos - self.transform.offset, impulse);
+            self.angular_velo += moment / self.moi;
         }
     }
 }
@@ -374,7 +405,7 @@ impl Transform {
 impl RusHydroApp {
     pub(super) const SLOPE_ANGLE: f32 = std::f32::consts::PI * 0.05;
 
-    pub(super) fn gen_obstacles(rect: &Rect, obs: Obstacles) -> Vec<Obstacle> {
+    pub(super) fn gen_obstacles(rect: &Rect, obs: Environment) -> Vec<Obstacle> {
         let gen_slope = || {
             let y_off = rect.width() * 0.5 * Self::SLOPE_ANGLE.sin();
             Obstacle::new(RectObstacle::new(
@@ -385,7 +416,7 @@ impl RusHydroApp {
             ))
         };
         match obs {
-            Obstacles::Snake => {
+            Environment::Snake => {
                 const OFFSET: f32 = PARTICLE_RENDER_RADIUS / SCALE;
                 vec![
                     Obstacle::new(RectObstacle::new(
@@ -402,10 +433,10 @@ impl RusHydroApp {
                     )),
                 ]
             }
-            Obstacles::Slope => {
+            Environment::Slope => {
                 vec![gen_slope()]
             }
-            Obstacles::WaterMill => {
+            Environment::WaterMill => {
                 let axis = vec2(0., rect.height() * 0.1);
                 vec![
                     gen_slope(),
@@ -429,7 +460,7 @@ impl RusHydroApp {
                     .with_pivot(Vec2::ZERO),
                 ]
             }
-            Obstacles::Capillary => {
+            Environment::Capillary => {
                 const GAP: f32 = 2.;
                 const WALL_THICKNESS: f32 = 2.;
                 vec![
@@ -449,13 +480,24 @@ impl RusHydroApp {
                     .with_hydrophilic(true),
                 ]
             }
+            Environment::Buoy => {
+                vec![Obstacle::new(RectObstacle::new(
+                    vec2(0., 0.),
+                    0.,
+                    vec2(rect.width() / 4., rect.height() / 8.),
+                    100.,
+                ))
+                .with_gravity()
+                .with_hydrophilic(false)
+                .with_constrain_rect(true)]
+            }
             _ => vec![],
         }
     }
 
     pub(super) fn update_obstacles(&mut self, delta_time: f32) {
         for obstacle in &mut self.obstacles {
-            obstacle.update(self.gravity, delta_time);
+            obstacle.update(&self.rect, self.gravity, delta_time);
         }
     }
 }
