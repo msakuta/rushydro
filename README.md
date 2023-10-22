@@ -8,6 +8,8 @@ Try it on your browser! https://msakuta.github.io/rushydro/
 
 https://github.com/msakuta/rushydro/assets/2798715/97aecdee-ec10-4994-9bd3-7013f273e2cd
 
+https://github.com/msakuta/rushydro/assets/2798715/974de89f-6578-4add-983e-41e4f08c40ff
+
 
 
 ## What is this?
