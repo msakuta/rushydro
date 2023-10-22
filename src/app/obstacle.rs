@@ -17,6 +17,7 @@ pub(super) struct Obstacle {
     transform: Transform,
     velo: Vec2,
     angular_velo: f32,
+    angular_decay: f32,
     mass: f32,
     /// Moment of Inertia, kg * m^2
     moi: f32,
@@ -33,6 +34,7 @@ impl Default for Obstacle {
             transform: Transform::default(),
             velo: Vec2::ZERO,
             angular_velo: 0.,
+            angular_decay: 0.,
             mass: 0.,
             moi: 0.,
             pivot: None,
@@ -79,6 +81,13 @@ impl Obstacle {
             mass,
             moi,
             ..Self::default()
+        }
+    }
+
+    pub fn with_angular_decay(self, v: f32) -> Self {
+        Self {
+            angular_decay: v,
+            ..self
         }
     }
 
@@ -180,7 +189,9 @@ impl Obstacle {
             }
 
             self.transform.rotation += self.angular_velo * delta_time;
-            self.angular_velo *= (-delta_time * 0.1).exp();
+            if self.angular_decay != 0. {
+                self.angular_velo *= (-delta_time * self.angular_decay).exp();
+            }
         }
     }
 
@@ -457,6 +468,7 @@ impl RusHydroApp {
                         ],
                         axis,
                     )
+                    .with_angular_decay(0.001)
                     .with_pivot(Vec2::ZERO),
                 ]
             }
@@ -487,6 +499,7 @@ impl RusHydroApp {
                     vec2(rect.width() / 4., rect.height() / 8.),
                     100.,
                 ))
+                .with_angular_decay(0.1)
                 .with_gravity()
                 .with_hydrophilic(false)
                 .with_constrain_rect(true)]
