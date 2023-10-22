@@ -1,5 +1,9 @@
 # rushydro
 
+<p align="center">
+    <img width="128" src="assets/icon-256.png" alt="rushydro icon">
+</p>
+
 Fluid simulation with particles
 
 Try it on your browser! https://msakuta.github.io/rushydro/

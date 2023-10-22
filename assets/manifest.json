@@ -1,6 +1,6 @@
 {
-  "name": "egui Template PWA",
-  "short_name": "egui-template-pwa",
+  "name": "rushydro PWA",
+  "short_name": "rushydro-pwa",
   "icons": [
     {
       "src": "./icon-256.png",
