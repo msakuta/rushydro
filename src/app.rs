@@ -97,6 +97,8 @@ pub struct RusHydroApp {
     show_surface: bool,
     /// Show the liquid's filled color
     show_filled_color: bool,
+    show_shrunk_obstacles: bool,
+    show_obstacle_distance: bool,
     show_grid: bool,
     show_grid_count: bool,
     color_by_speed: bool,
@@ -149,6 +151,8 @@ impl RusHydroApp {
             show_particles: true,
             show_surface: true,
             show_filled_color: true,
+            show_shrunk_obstacles: true,
+            show_obstacle_distance: false,
             show_grid: false,
             show_grid_count: false,
             color_by_speed: true,
@@ -391,6 +395,12 @@ impl RusHydroApp {
                 _ => {}
             }
 
+            let shrink_distance = if self.show_shrunk_obstacles {
+                -PARTICLE_RENDER_RADIUS / SCALE
+            } else {
+                0.
+            };
+
             for obstacle in &self.obstacles {
                 obstacle.foreach_shape(
                     &mut |points| {
@@ -399,8 +409,20 @@ impl RusHydroApp {
                             PathShape::convex_polygon(points, Color32::WHITE, (1., Color32::BLACK));
                         painter.add(shape);
                     },
-                    -PARTICLE_RENDER_RADIUS / SCALE,
+                    shrink_distance,
                 );
+                if self.show_obstacle_distance {
+                    if let Some(scr_pos) = response.hover_pos() {
+                        let pos = from_pos2(scr_pos);
+                        if let Some(res) = obstacle.distance(pos.to_vec2()) {
+                            let scr_normal = vec2(res.normal.x, -res.normal.y);
+                            painter.line_segment(
+                                [scr_pos, scr_pos - scr_normal * res.dist * SCALE],
+                                (2., Color32::RED),
+                            );
+                        }
+                    }
+                }
             }
 
             let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);
@@ -552,6 +574,8 @@ impl RusHydroApp {
         ui.checkbox(&mut self.show_particles, "Show particles");
         ui.checkbox(&mut self.show_surface, "Show surface");
         ui.checkbox(&mut self.show_filled_color, "Show filled color");
+        ui.checkbox(&mut self.show_shrunk_obstacles, "Show shrunk obstacles");
+        ui.checkbox(&mut self.show_obstacle_distance, "Show obstacle distance");
         ui.checkbox(&mut self.show_grid, "Show grid");
         ui.checkbox(&mut self.show_grid_count, "Show grid count");
         ui.checkbox(&mut self.color_by_speed, "Color by speed");

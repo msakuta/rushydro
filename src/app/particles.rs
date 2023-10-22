@@ -3,8 +3,9 @@ use rand::{thread_rng, Rng};
 use std::{cell::Cell, collections::HashMap};
 
 use super::{
-    obstacle::Obstacles, HashEntry, NeighborMode, NeighborPayload, Params, RusHydroApp, CELL_SIZE,
-    MAX_HISTORY, PARTICLE_RADIUS, PARTICLE_RADIUS2,
+    obstacle::{Obstacle, Obstacles},
+    HashEntry, NeighborMode, NeighborPayload, Params, RusHydroApp, CELL_SIZE, MAX_HISTORY,
+    PARTICLE_RADIUS, PARTICLE_RADIUS2,
 };
 use crate::measure_time;
 
@@ -30,6 +31,16 @@ impl RusHydroApp {
         self.neighbor_payload = NeighborPayload::BruteForce;
     }
 
+    fn repulsion_func(dist: f32, params: &Params) -> f32 {
+        let f = (1. - dist / PARTICLE_RADIUS).powf(2.);
+        1. / dist
+            * (if f < params.surface_tension_threshold {
+                (f - params.surface_tension_threshold) * params.surface_tension
+            } else {
+                f - params.surface_tension_threshold
+            })
+    }
+
     fn update_speed(particle_i: &Particle, particle_j: &Particle, params: &Params) {
         let pos_i = particle_i.pos.get();
         let pos_j = particle_j.pos.get();
@@ -40,13 +51,7 @@ impl RusHydroApp {
         let dist2 = delta.length_sq();
         if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
             let dist = dist2.sqrt();
-            let f = (1. - dist / PARTICLE_RADIUS).powf(2.);
-            let repulsion = delta / dist
-                * (if f < params.surface_tension_threshold {
-                    (f - params.surface_tension_threshold) * params.surface_tension
-                } else {
-                    f - params.surface_tension_threshold
-                });
+            let repulsion = delta * Self::repulsion_func(dist, params);
             particle_i.velo.set(
                 velo_i
                     + repulsion * params.repulsion_force
@@ -57,6 +62,28 @@ impl RusHydroApp {
                     + (average_velo - velo_j) * params.viscosity,
             );
         }
+    }
+
+    fn update_speed_from_obstacles(
+        obstacles: &mut [Obstacle],
+        particle: &Particle,
+        params: &Params,
+    ) {
+        let pos = particle.pos.get();
+        let mut velo = particle.velo.get();
+        for obstacle in obstacles {
+            if !obstacle.is_hydrophilic() {
+                continue;
+            }
+            if let Some(result) = obstacle.distance(pos) {
+                if 0. < result.dist && result.dist < PARTICLE_RADIUS {
+                    let impulse = result.normal * Self::repulsion_func(result.dist, params);
+                    velo = impulse;
+                    obstacle.apply_impulse(-impulse, pos);
+                }
+            }
+        }
+        particle.velo.set(velo);
     }
 
     pub(super) fn update_particles(&mut self) {
@@ -88,6 +115,11 @@ impl RusHydroApp {
                             }
                             Self::update_speed(particle_i, particle_j, &self.params);
                         }
+                        Self::update_speed_from_obstacles(
+                            &mut self.obstacles,
+                            particle_i,
+                            &self.params,
+                        );
                     }
                 });
                 self.time_history.push_back(time);
@@ -132,6 +164,11 @@ impl RusHydroApp {
                             }
                         }
                     }
+                    Self::update_speed_from_obstacles(
+                        &mut self.obstacles,
+                        particle_i,
+                        &self.params,
+                    );
                 }
             }
             NeighborPayload::SortMap {
@@ -200,6 +237,11 @@ impl RusHydroApp {
                             }
                         }
                     }
+                    Self::update_speed_from_obstacles(
+                        &mut self.obstacles,
+                        particle_i,
+                        &self.params,
+                    );
                 }
             }
         }

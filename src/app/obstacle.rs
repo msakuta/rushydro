@@ -20,6 +20,7 @@ pub(super) struct Obstacle {
     moi: f32,
     pivot: Option<Vec2>,
     sense_gravity: bool,
+    hydrophilic: bool,
 }
 
 pub(super) enum ObstacleShape {
@@ -40,6 +41,7 @@ impl Obstacle {
             moi,
             pivot: None,
             sense_gravity: false,
+            hydrophilic: false,
         }
     }
 
@@ -65,6 +67,7 @@ impl Obstacle {
             moi,
             pivot: None,
             sense_gravity: false,
+            hydrophilic: false,
         }
     }
 
@@ -80,6 +83,17 @@ impl Obstacle {
             sense_gravity: true,
             ..self
         }
+    }
+
+    pub fn with_hydrophilic(self, v: bool) -> Self {
+        Self {
+            hydrophilic: v,
+            ..self
+        }
+    }
+
+    pub fn is_hydrophilic(&self) -> bool {
+        self.hydrophilic
     }
 
     /// Call the callback for each of the shape in a potentially compound object.
@@ -99,14 +113,32 @@ impl Obstacle {
     }
 
     /// Returns the distance (negative) and the normal vector of that surface.
+    ///
+    /// hit_test is similar to `distance`, but the difference is that hit test only returns if the given point
+    /// intersects with the shape, thus utilizing some optimizaion to make the calculation faster.
     pub fn hit_test(&self, pos: Vec2) -> Option<ObstacleHitResult> {
         let local_pos = self.transform.apply_inverse(pos.to_pos2());
-        self.shape.hit_test(local_pos.to_vec2()).map(|mut res| {
-            res.normal = self.transform.apply_vec(res.normal);
-            let velo = self.angular_velo * rotate90(local_pos.to_vec2());
-            res.velo = self.transform.apply_vec(velo);
-            res
-        })
+        self.shape
+            .distance(local_pos.to_vec2(), true)
+            .map(|mut res| {
+                res.normal = self.transform.apply_vec(res.normal);
+                let velo = self.angular_velo * rotate90(local_pos.to_vec2());
+                res.velo = self.transform.apply_vec(velo);
+                res
+            })
+    }
+
+    /// Returns the distance (either positive or negative) and the normal vector of that surface.
+    pub fn distance(&self, pos: Vec2) -> Option<ObstacleHitResult> {
+        let local_pos = self.transform.apply_inverse(pos.to_pos2());
+        self.shape
+            .distance(local_pos.to_vec2(), false)
+            .map(|mut res| {
+                res.normal = self.transform.apply_vec(res.normal);
+                let velo = self.angular_velo * rotate90(local_pos.to_vec2());
+                res.velo = self.transform.apply_vec(velo);
+                res
+            })
     }
 
     pub fn update(&mut self, gravity: f32, delta_time: f32) {
@@ -157,16 +189,13 @@ impl ObstacleShape {
         }
     }
 
-    fn hit_test(&self, pos: Vec2) -> Option<ObstacleHitResult> {
+    fn distance(&self, pos: Vec2, only_hits: bool) -> Option<ObstacleHitResult> {
         match self {
-            Self::Rect(r) => r.hit_test(pos),
+            Self::Rect(r) => r.hit_test(pos, only_hits),
             Self::Compound(c) => c.iter().fold(None, |acc, cur| {
-                let Some(res) = cur.hit_test(pos) else {
+                let Some(res) = cur.distance(pos, only_hits) else {
                     return acc;
                 };
-                if 0. < res.dist {
-                    return acc;
-                }
                 if let Some(acc) = acc {
                     if res.dist < acc.dist {
                         Some(res)
@@ -219,66 +248,81 @@ impl RectObstacle {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(super) struct ObstacleHitResult {
     pub dist: f32,
     pub normal: Vec2,
     pub velo: Vec2,
 }
 
+impl PartialEq for ObstacleHitResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.dist == other.dist
+    }
+}
+
+impl PartialOrd for ObstacleHitResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.dist.partial_cmp(&other.dist)
+    }
+}
+
 impl RectObstacle {
     /// Returns the distance (negative) and the normal vector of that surface.
-    pub fn hit_test(&self, pos: Vec2) -> Option<ObstacleHitResult> {
-        let edge_distance = |p: Vec2, org: Vec2, normal: Vec2| {
-            let dp = p - org;
-            dp.dot(normal)
+    pub fn hit_test(&self, pos: Vec2, only_hits: bool) -> Option<ObstacleHitResult> {
+        let get_edge_distance = |edge_dist: f32, local_normal: Vec2| {
+            let normal = self.transform.apply_vec(local_normal);
+            let org = self.transform.offset + normal * edge_dist;
+            let dp = pos - org;
+            (dp.dot(normal), normal)
         };
-        let up = self.transform.apply_vec(vec2(0., 1.));
-        let top = edge_distance(pos, self.transform.offset + up * self.halfsize.y, up);
-        let down = -up;
-        let bottom = edge_distance(pos, self.transform.offset + down * self.halfsize.y, down);
-        let left_dir = self.transform.apply_vec(vec2(1., 0.));
-        let left = edge_distance(
-            pos,
-            self.transform.offset + left_dir * self.halfsize.x,
-            left_dir,
-        );
-        let right_dir = -left_dir;
-        let right = edge_distance(
-            pos,
-            self.transform.offset + right_dir * self.halfsize.x,
-            right_dir,
-        );
+        let top = get_edge_distance(self.halfsize.y, vec2(0., 1.));
+        let bottom = get_edge_distance(self.halfsize.y, vec2(0., -1.));
+        let left = get_edge_distance(self.halfsize.x, vec2(1., 0.));
+        let right = get_edge_distance(self.halfsize.x, vec2(-1., 0.));
 
-        if 0. < left || 0. < top || 0. < right || 0. < bottom {
+        if only_hits && (0. < left.0 || 0. < top.0 || 0. < right.0 || 0. < bottom.0) {
             return None;
         }
 
-        [
-            (left, left_dir),
-            (top, up),
-            (right, right_dir),
-            (bottom, down),
-        ]
-        .iter()
-        .fold(None, |acc: Option<(f32, Vec2)>, cur| {
-            if 0. < cur.0 {
-                return acc;
+        if !only_hits {
+            let local_pos = self.transform.apply_inverse(pos.to_pos2());
+            if self.halfsize.x < local_pos.x.abs() && self.halfsize.y < local_pos.y.abs() {
+                let corner_pos = pos2(
+                    local_pos.x.signum() * self.halfsize.x,
+                    local_pos.y.signum() * self.halfsize.y,
+                );
+                let delta = self.transform.apply_vec(local_pos - corner_pos);
+                let len = delta.length();
+                return Some(ObstacleHitResult {
+                    dist: len,
+                    normal: delta / len,
+                    velo: Vec2::ZERO,
+                });
             }
-            if let Some(acc) = acc {
-                if acc.0 < cur.0 {
-                    Some(*cur)
-                } else {
-                    Some(acc)
+        }
+
+        [left, top, right, bottom]
+            .iter()
+            .fold(None, |acc: Option<(f32, Vec2)>, cur: &(f32, Vec2)| {
+                if only_hits && 0. < cur.0 {
+                    return acc;
                 }
-            } else {
-                Some(*cur)
-            }
-        })
-        .map(|v| ObstacleHitResult {
-            dist: v.0,
-            normal: v.1,
-            velo: Vec2::ZERO,
-        })
+                if let Some(acc) = acc {
+                    if acc.0 < cur.0 {
+                        Some(*cur)
+                    } else {
+                        Some(acc)
+                    }
+                } else {
+                    Some(*cur)
+                }
+            })
+            .map(|v| ObstacleHitResult {
+                dist: v.0,
+                normal: v.1,
+                velo: Vec2::ZERO,
+            })
     }
 }
 
@@ -381,7 +425,8 @@ impl RusHydroApp {
                         ],
                         axis,
                     )
-                    .with_pivot(Vec2::ZERO),
+                    .with_pivot(Vec2::ZERO)
+                    .with_hydrophilic(true),
                 ]
             }
             _ => vec![],
