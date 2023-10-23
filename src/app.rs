@@ -1,3 +1,4 @@
+mod fields;
 mod obstacle;
 mod particles;
 
@@ -10,21 +11,17 @@ use eframe::{
     egui::{
         self,
         plot::{Legend, Line, Plot, PlotPoints},
-        Context, Frame, TextureOptions, Ui,
+        Context, Frame, Ui,
     },
     emath::Align2,
-    epaint::{pos2, vec2, Color32, FontId, PathShape, Pos2, Rect, Stroke, Vec2},
+    epaint::{pos2, vec2, Color32, FontId, PathShape, Pos2, Rect, Vec2},
 };
 use rand::{thread_rng, Rng};
 
 use self::{
+    fields::Fields,
     obstacle::{Environment, Obstacle},
     particles::Particle,
-};
-
-use crate::marching_squares::{
-    border_pixel, cell_border_interpolated, cell_polygon_interpolated, pick_bits, pick_values,
-    Shape,
 };
 
 const SCALE: f32 = 10.;
@@ -121,9 +118,7 @@ pub struct RusHydroApp {
     sort_time_history: VecDeque<SortMapTime>,
     density_resolution: f32,
     density_radius: f32,
-    density_map: Vec<f32>,
-    density_shape: Shape,
-    temperature_map: Vec<f32>,
+    fields: Fields,
 }
 
 impl RusHydroApp {
@@ -143,8 +138,7 @@ impl RusHydroApp {
         let density_resolution = DENSITY_RESOLUTION;
         let obstacle_select = Environment::None;
         let obstacles = Self::gen_obstacles(&rect, obstacle_select);
-        let (density_map, density_shape, temperature_map) =
-            Self::gen_board(&rect, density_resolution);
+        let fields = Fields::new(&rect, density_resolution);
         Self {
             particles,
             rect,
@@ -179,23 +173,8 @@ impl RusHydroApp {
             sort_time_history: VecDeque::new(),
             density_resolution,
             density_radius: DENSITY_RADIUS,
-            density_map,
-            density_shape,
-            temperature_map,
+            fields,
         }
-    }
-
-    fn gen_board(rect: &Rect, density_resolution: f32) -> (Vec<f32>, Shape, Vec<f32>) {
-        let width = (rect.width() / density_resolution) as usize + 1;
-        let height = (rect.height() / density_resolution) as usize + 1;
-        let map = vec![0.; width * height];
-        (map.clone(), (width as isize, height as isize), map)
-    }
-
-    fn temperature_rgb(temperature: f32) -> [u8; 3] {
-        let red = (255. * (temperature * 0.5 + 0.5)).clamp(0., 255.) as u8;
-        let gb = (255. * (1. - temperature * 0.5)).clamp(0., 255.) as u8;
-        [red, gb, gb]
     }
 
     fn paint_canvas(&mut self, ui: &mut Ui) {
@@ -234,145 +213,20 @@ impl RusHydroApp {
             };
 
             if self.show_surface || self.show_filled_color {
-                self.density_map.fill(0.);
-                self.temperature_map.fill(0.);
-                let resol = self.density_resolution;
-                let pix_rad = (self.density_radius / resol).ceil() as isize;
-                for particle in self.particles.iter() {
-                    let pos = particle.pos.get();
-                    let density_pos = (
-                        (pos.x - self.rect.min.x) / resol,
-                        (pos.y - self.rect.min.y) / resol,
-                    );
-                    let density_idx = (
-                        density_pos.0.floor() as isize,
-                        density_pos.1.floor() as isize,
-                    );
-                    for cy in density_idx.1 - pix_rad..=density_idx.1 + pix_rad {
-                        for cx in density_idx.0 - pix_rad..=density_idx.0 + pix_rad {
-                            if 0 <= cx
-                                && cx < self.density_shape.0
-                                && 0 <= cy
-                                && cy < self.density_shape.1
-                            {
-                                let dx = cx as f32 - density_pos.0;
-                                let dy = cy as f32 - density_pos.1;
-                                let my_density = 1. / (1. + dx * dx + dy * dy);
-                                let buf_idx = (cx + cy * self.density_shape.0) as usize;
-                                let cell_temp = &mut self.temperature_map[buf_idx];
-                                let cell_dens = &mut self.density_map[buf_idx];
-                                *cell_temp = (*cell_temp * *cell_dens
-                                    + particle.temp.get() * my_density)
-                                    / (*cell_dens + my_density);
-                                *cell_dens += my_density;
-                            }
-                        }
-                    }
-                }
+                self.fields
+                    .update(&self.rect, &self.particles, self.density_radius);
 
                 if self.show_filled_color {
-                    let bits_x = self.density_shape.0 - 1;
-                    let bits_y = self.density_shape.1 - 1;
-                    let mut bits = vec![0u8; (bits_x * bits_y) as usize];
-                    for cy in 0..bits_y {
-                        for cx in 0..bits_x {
-                            bits[(cx + cy * bits_x) as usize] =
-                                pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
-                        }
-                    }
-
-                    let image = bits
-                        .iter()
-                        .enumerate()
-                        .map(|(i, v)| {
-                            let x = i % bits_x as usize;
-                            let y = i / bits_x as usize;
-                            if 15 == *v {
-                                Self::temperature_rgb(
-                                    self.temperature_map[x + y * self.density_shape.0 as usize],
-                                )
-                            } else if (x + y) % 2 == 0 {
-                                [255, 251, 251]
-                            } else {
-                                [255; 3]
-                            }
-                        })
-                        .flatten()
-                        .collect::<Vec<_>>();
-
-                    let image =
-                        egui::ColorImage::from_rgb([bits_x as usize, bits_y as usize], &image);
-
-                    let texture = painter.ctx().load_texture(
-                        "my-image",
-                        image,
-                        TextureOptions {
-                            magnification: egui::TextureFilter::Nearest,
-                            minification: egui::TextureFilter::Linear,
-                        },
-                    );
-
-                    const UV: Rect = Rect::from_min_max(pos2(0., 1.), Pos2::new(1.0, 0.0));
-                    let mut scr_rect = Rect::from_min_max(
-                        to_pos2(self.rect.min),
-                        to_pos2(pos2(
-                            self.rect.min.x + bits_x as f32 * resol,
-                            self.rect.min.y + bits_y as f32 * resol,
-                        )),
-                    );
-                    std::mem::swap(&mut scr_rect.min.y, &mut scr_rect.max.y);
-                    painter.image(texture.id(), scr_rect, UV, Color32::WHITE);
+                    self.fields.render_image(&painter, &self.rect, &to_pos2);
                 }
 
                 if self.show_surface {
-                    for cy in 0..self.density_shape.1 - 1 {
-                        let offset_y = (cy as f32 + 0.5) * resol + self.rect.min.y;
-                        for cx in 0..self.density_shape.0 - 1 {
-                            let offset_x = (cx as f32 + 0.5) * resol + self.rect.min.x;
-                            let bits =
-                                pick_bits(&self.density_map, self.density_shape, (cx, cy), 0.5);
-                            if !border_pixel(bits) {
-                                continue;
-                            }
-                            let values =
-                                pick_values(&self.density_map, self.density_shape, (cx, cy));
-                            if self.show_filled_color {
-                                cell_polygon_interpolated(bits, values, |points| {
-                                    let points = points
-                                        .chunks(2)
-                                        .map(|x| {
-                                            to_pos2(pos2(
-                                                x[0] * resol * 0.5 + offset_x,
-                                                x[1] * resol * 0.5 + offset_y,
-                                            ))
-                                        })
-                                        .collect();
-                                    let rgb = Self::temperature_rgb(self.temperature_map[(cx + cy * self.density_shape.0) as usize]);
-                                    let poly = PathShape::convex_polygon(
-                                        points,
-                                        Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
-                                        Stroke::NONE,
-                                    );
-                                    painter.add(poly);
-                                });
-                            }
-                            if let Some((lines, len)) = cell_border_interpolated(bits, values) {
-                                for line in lines.chunks(4).take(len / 4) {
-                                    let points = [
-                                        to_pos2(pos2(
-                                            line[0] * resol * 0.5 + offset_x,
-                                            line[1] * resol * 0.5 + offset_y,
-                                        )),
-                                        to_pos2(pos2(
-                                            line[2] * resol * 0.5 + offset_x,
-                                            line[3] * resol * 0.5 + offset_y,
-                                        )),
-                                    ];
-                                    painter.line_segment(points, (1., Color32::BLUE));
-                                }
-                            }
-                        }
-                    }
+                    self.fields.render_surface(
+                        &painter,
+                        &self.rect,
+                        self.show_filled_color,
+                        &to_pos2,
+                    );
                 }
             }
 
@@ -624,8 +478,7 @@ impl RusHydroApp {
             ))
             .changed();
         if map_changed {
-            (self.density_map, self.density_shape, self.temperature_map) =
-                Self::gen_board(&self.rect, self.density_resolution);
+            self.fields = Fields::new(&self.rect, self.density_resolution);
             self.obstacles = Self::gen_obstacles(&self.rect, self.obstacle_select);
         }
         ui.checkbox(&mut self.show_particles, "Show particles");
