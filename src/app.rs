@@ -123,6 +123,7 @@ pub struct RusHydroApp {
     density_radius: f32,
     density_map: Vec<f32>,
     density_shape: Shape,
+    temperature_map: Vec<f32>,
 }
 
 impl RusHydroApp {
@@ -142,7 +143,8 @@ impl RusHydroApp {
         let density_resolution = DENSITY_RESOLUTION;
         let obstacle_select = Environment::None;
         let obstacles = Self::gen_obstacles(&rect, obstacle_select);
-        let (density_map, density_shape) = Self::gen_board(&rect, density_resolution);
+        let (density_map, density_shape, temperature_map) =
+            Self::gen_board(&rect, density_resolution);
         Self {
             particles,
             rect,
@@ -179,13 +181,15 @@ impl RusHydroApp {
             density_radius: DENSITY_RADIUS,
             density_map,
             density_shape,
+            temperature_map,
         }
     }
 
-    fn gen_board(rect: &Rect, density_resolution: f32) -> (Vec<f32>, Shape) {
+    fn gen_board(rect: &Rect, density_resolution: f32) -> (Vec<f32>, Shape, Vec<f32>) {
         let width = (rect.width() / density_resolution) as usize + 1;
         let height = (rect.height() / density_resolution) as usize + 1;
-        (vec![0.; width * height], (width as isize, height as isize))
+        let map = vec![0.; width * height];
+        (map.clone(), (width as isize, height as isize), map)
     }
 
     fn paint_canvas(&mut self, ui: &mut Ui) {
@@ -225,12 +229,14 @@ impl RusHydroApp {
 
             if self.show_surface || self.show_filled_color {
                 self.density_map.fill(0.);
+                self.temperature_map.fill(0.);
                 let resol = self.density_resolution;
                 let pix_rad = (self.density_radius / resol).ceil() as isize;
                 for particle in self.particles.iter() {
+                    let pos = particle.pos.get();
                     let density_pos = (
-                        (particle.pos.get().x - self.rect.min.x) / resol,
-                        (particle.pos.get().y - self.rect.min.y) / resol,
+                        (pos.x - self.rect.min.x) / resol,
+                        (pos.y - self.rect.min.y) / resol,
                     );
                     let density_idx = (
                         density_pos.0.floor() as isize,
@@ -245,8 +251,14 @@ impl RusHydroApp {
                             {
                                 let dx = cx as f32 - density_pos.0;
                                 let dy = cy as f32 - density_pos.1;
-                                self.density_map[(cx + cy * self.density_shape.0) as usize] +=
-                                    1. / (1. + dx * dx + dy * dy);
+                                let my_density = 1. / (1. + dx * dx + dy * dy);
+                                let buf_idx = (cx + cy * self.density_shape.0) as usize;
+                                let cell_temp = &mut self.temperature_map[buf_idx];
+                                let cell_dens = &mut self.density_map[buf_idx];
+                                *cell_temp = (*cell_temp * *cell_dens
+                                    + particle.temp.get() * my_density)
+                                    / (*cell_dens + my_density);
+                                *cell_dens += my_density;
                             }
                         }
                     }
@@ -270,7 +282,11 @@ impl RusHydroApp {
                             let x = i % bits_x as usize;
                             let y = i / bits_x as usize;
                             if 15 == *v {
-                                [127, 255, 255]
+                                let temperature =
+                                    self.temperature_map[x + y * self.density_shape.0 as usize];
+                                let red = (127. + (temperature * 127.)).clamp(0., 255.) as u8;
+                                let gb = (255. * (1. - temperature)).clamp(0., 255.) as u8;
+                                [red, gb, gb]
                             } else if (x + y) % 2 == 0 {
                                 [255, 251, 251]
                             } else {
@@ -603,7 +619,7 @@ impl RusHydroApp {
             ))
             .changed();
         if map_changed {
-            (self.density_map, self.density_shape) =
+            (self.density_map, self.density_shape, self.temperature_map) =
                 Self::gen_board(&self.rect, self.density_resolution);
             self.obstacles = Self::gen_obstacles(&self.rect, self.obstacle_select);
         }
