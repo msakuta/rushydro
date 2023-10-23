@@ -8,13 +8,34 @@ Fluid simulation with particles
 
 Try it on your browser! https://msakuta.github.io/rushydro/
 
+## Gallery
+
 ![screenshot](images/screenshot00.png)
+
+
+### Watermill
+
+A demonstration of combined simulation of Lagrangean fluid and rigid bodies.
 
 https://github.com/msakuta/rushydro/assets/2798715/97aecdee-ec10-4994-9bd3-7013f273e2cd
 
+
+### Buoyancy
+
+A solid object whose average density is lighter than the liquid will float on it.
+
 https://github.com/msakuta/rushydro/assets/2798715/974de89f-6578-4add-983e-41e4f08c40ff
 
-https://github.com/msakuta/rushydro/assets/2798715/fdc5ebd7-d29e-4fc0-8095-abbb714a95e8
+
+### Heat convection
+
+Below is a heat convection simulation, where the bottom of the screen has a heat source that increases fluid temperature.
+Higher tenperature particles exert more pressure. It is notable that convection (hot fluid floats, cool fluid sinks) naturally emerges.
+Nearby particles can exchange heat, which realizes heat diffusion.
+Note that the temperature is an attribute of each particle, so they will advect along with the particles.
+
+https://github.com/msakuta/rushydro/assets/2798715/158b1270-1737-4e68-af25-41c63ea996f3
+
 
 
 
