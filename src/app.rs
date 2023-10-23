@@ -192,6 +192,12 @@ impl RusHydroApp {
         (map.clone(), (width as isize, height as isize), map)
     }
 
+    fn temperature_rgb(temperature: f32) -> [u8; 3] {
+        let red = (255. * (temperature * 0.5 + 0.5)).clamp(0., 255.) as u8;
+        let gb = (255. * (1. - temperature * 0.5)).clamp(0., 255.) as u8;
+        [red, gb, gb]
+    }
+
     fn paint_canvas(&mut self, ui: &mut Ui) {
         Frame::canvas(ui.style()).show(ui, |ui| {
             let (response, painter) =
@@ -282,11 +288,9 @@ impl RusHydroApp {
                             let x = i % bits_x as usize;
                             let y = i / bits_x as usize;
                             if 15 == *v {
-                                let temperature =
-                                    self.temperature_map[x + y * self.density_shape.0 as usize];
-                                let red = (127. + (temperature * 127.)).clamp(0., 255.) as u8;
-                                let gb = (255. * (1. - temperature)).clamp(0., 255.) as u8;
-                                [red, gb, gb]
+                                Self::temperature_rgb(
+                                    self.temperature_map[x + y * self.density_shape.0 as usize],
+                                )
                             } else if (x + y) % 2 == 0 {
                                 [255, 251, 251]
                             } else {
@@ -343,9 +347,10 @@ impl RusHydroApp {
                                             ))
                                         })
                                         .collect();
+                                    let rgb = Self::temperature_rgb(self.temperature_map[(cx + cy * self.density_shape.0) as usize]);
                                     let poly = PathShape::convex_polygon(
                                         points,
-                                        Color32::from_rgb(127, 255, 255),
+                                        Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
                                         Stroke::NONE,
                                     );
                                     painter.add(poly);
