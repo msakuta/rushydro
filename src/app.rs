@@ -130,13 +130,14 @@ impl RusHydroApp {
         let mut rng = thread_rng();
         let rect = Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.));
         let particles = (0..NUM_PARTICLES)
-            .map(|_| Particle {
-                pos: Cell::new(vec2(
-                    rng.gen_range(rect.min.x..rect.max.x),
-                    rng.gen_range(rect.min.y..rect.max.y),
-                )),
-                velo: Cell::new(Vec2::ZERO),
-                temp: Cell::new(0.),
+            .map(|_| {
+                Particle::new(
+                    vec2(
+                        rng.gen_range(rect.min.x..rect.max.x),
+                        rng.gen_range(rect.min.y..rect.max.y),
+                    ),
+                    Vec2::ZERO,
+                )
             })
             .collect();
         let density_resolution = DENSITY_RESOLUTION;

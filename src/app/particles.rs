@@ -13,19 +13,32 @@ pub(super) struct Particle {
     pub pos: Cell<Vec2>,
     pub velo: Cell<Vec2>,
     pub temp: Cell<f32>,
+    pub predicted_pos: Cell<Vec2>,
+}
+
+impl Particle {
+    pub fn new(pos: Vec2, velo: Vec2) -> Self {
+        Self {
+            pos: Cell::new(pos),
+            velo: Cell::new(velo),
+            temp: Cell::new(0.),
+            predicted_pos: Cell::new(Vec2::ZERO),
+        }
+    }
 }
 
 impl RusHydroApp {
     pub(super) fn reset(&mut self) {
         let mut rng = thread_rng();
         let particles = (0..self.num_particles)
-            .map(|_| Particle {
-                pos: Cell::new(vec2(
-                    rng.gen_range(self.rect.min.x..self.rect.max.x),
-                    rng.gen_range(self.rect.min.y..self.rect.max.y),
-                )),
-                velo: Cell::new(Vec2::ZERO),
-                temp: Cell::new(0.),
+            .map(|_| {
+                Particle::new(
+                    vec2(
+                        rng.gen_range(self.rect.min.x..self.rect.max.x),
+                        rng.gen_range(self.rect.min.y..self.rect.max.y),
+                    ),
+                    Vec2::ZERO,
+                )
             })
             .collect();
         self.particles = particles;
@@ -44,7 +57,7 @@ impl RusHydroApp {
             })
     }
 
-    fn update_speed(particle_i: &Particle, particle_j: &Particle, params: &Params) {
+    fn update_nonpressure(particle_i: &Particle, particle_j: &Particle, params: &Params) {
         let pos_i = particle_i.pos.get();
         let pos_j = particle_j.pos.get();
         let delta = pos_i - pos_j;
@@ -54,17 +67,12 @@ impl RusHydroApp {
         let dist2 = delta.length_sq();
         if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
             let dist = dist2.sqrt();
-            let repulsion = delta
-                * Self::repulsion_func(dist, params, particle_i.temp.get() + particle_j.temp.get());
-            particle_i.velo.set(
-                velo_i
-                    + repulsion * params.repulsion_force
-                    + (average_velo - velo_i) * params.viscosity,
-            );
-            particle_j.velo.set(
-                velo_j - repulsion * params.repulsion_force
-                    + (average_velo - velo_j) * params.viscosity,
-            );
+            particle_j
+                .velo
+                .set(velo_i + (average_velo - velo_i) * params.viscosity);
+            particle_j
+                .velo
+                .set(velo_j + (average_velo - velo_j) * params.viscosity);
             let heat_conduction = 1. - dist / PARTICLE_RADIUS;
             let temp_i = particle_i.temp.get();
             let temp_j = particle_j.temp.get();
@@ -75,6 +83,26 @@ impl RusHydroApp {
             particle_j
                 .temp
                 .set(temp_j + (average_temp - temp_j) * heat_conduction * 0.1);
+        }
+    }
+
+    fn update_pressure(particle_i: &Particle, particle_j: &Particle, params: &Params) {
+        let pos_i = particle_i.predicted_pos.get();
+        let pos_j = particle_j.predicted_pos.get();
+        let delta = pos_i - pos_j;
+        let velo_i = particle_i.velo.get();
+        let velo_j = particle_j.velo.get();
+        let dist2 = delta.length_sq();
+        if 0. < dist2 && dist2 < PARTICLE_RADIUS2 {
+            let dist = dist2.sqrt();
+            let repulsion = delta
+                * Self::repulsion_func(dist, params, particle_i.temp.get() + particle_j.temp.get());
+            particle_i
+                .velo
+                .set(velo_i + repulsion * params.repulsion_force);
+            particle_j
+                .velo
+                .set(velo_j - repulsion * params.repulsion_force);
         }
     }
 
@@ -99,6 +127,12 @@ impl RusHydroApp {
             }
         }
         particle.velo.set(velo);
+    }
+
+    fn predict_particle_position(particle: &Particle) {
+        let pos = particle.pos.get();
+        let velo = particle.velo.get();
+        particle.predicted_pos.set(pos + velo);
     }
 
     pub(super) fn update_particles(&mut self) {
@@ -128,7 +162,7 @@ impl RusHydroApp {
                             if i == j {
                                 continue;
                             }
-                            Self::update_speed(particle_i, particle_j, &self.params);
+                            Self::update_pressure(particle_i, particle_j, &self.params);
                         }
                         Self::update_speed_from_obstacles(
                             &mut self.obstacles,
@@ -172,7 +206,7 @@ impl RusHydroApp {
                                         continue;
                                     }
                                     let particle_j = &self.particles[j];
-                                    Self::update_speed(particle_i, particle_j, &self.params);
+                                    Self::update_pressure(particle_i, particle_j, &self.params);
                                 }
                             }
                         }
@@ -231,6 +265,38 @@ impl RusHydroApp {
                     }
                 });
 
+                fn process_cell(
+                    this_particle: usize,
+                    grid_pos: (i32, i32),
+                    hash_table: &[HashEntry],
+                    start_offsets: &[usize],
+                    particles: &[Particle],
+                    hasher: impl Fn((i32, i32)) -> usize,
+                    mut f: impl FnMut(&Particle),
+                ) {
+                    for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
+                        for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
+                            let cell_hash = hasher((cx, cy));
+                            let Some(&cell_start) = start_offsets.get(cell_hash) else {
+                                continue;
+                            };
+                            if cell_start == usize::MAX {
+                                continue;
+                            }
+                            for entry in &hash_table[cell_start..] {
+                                if this_particle == entry.particle_idx {
+                                    continue;
+                                }
+                                if entry.cell_hash != cell_hash {
+                                    break;
+                                }
+                                let particle_j = &particles[entry.particle_idx];
+                                f(particle_j);
+                            }
+                        }
+                    }
+                }
+
                 let (_, update_time) = measure_time(|| {
                     for (i, particle_i) in self.particles.iter().enumerate() {
                         let pos = particle_i.pos.get();
@@ -238,34 +304,48 @@ impl RusHydroApp {
                             pos.x.div_euclid(CELL_SIZE) as i32,
                             pos.y.div_euclid(CELL_SIZE) as i32,
                         );
-                        for cy in (grid_pos.1 - 1)..=(grid_pos.1 + 1) {
-                            for cx in (grid_pos.0 - 1)..=(grid_pos.0 + 1) {
-                                let cell_hash = hasher((cx, cy));
-                                let Some(&cell_start) = start_offsets.get(cell_hash) else {
-                                    continue;
-                                };
-                                if cell_start == usize::MAX {
-                                    continue;
-                                }
-                                for entry in &hash_table[cell_start..] {
-                                    if i == entry.particle_idx {
-                                        continue;
-                                    }
-                                    if entry.cell_hash != cell_hash {
-                                        break;
-                                    }
-                                    let particle_j = &self.particles[entry.particle_idx];
-                                    Self::update_speed(particle_i, particle_j, &self.params);
-                                }
-                            }
-                        }
-                        Self::update_speed_from_obstacles(
-                            &mut self.obstacles,
-                            particle_i,
-                            &self.params,
+                        process_cell(
+                            i,
+                            grid_pos,
+                            &hash_table,
+                            &start_offsets,
+                            &self.particles,
+                            hasher,
+                            |particle_j| {
+                                Self::update_nonpressure(particle_i, particle_j, &self.params);
+                                Self::update_speed_from_obstacles(
+                                    &mut self.obstacles,
+                                    particle_i,
+                                    &self.params,
+                                );
+                            },
                         );
                     }
                 });
+
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    Self::predict_particle_position(particle_i);
+                }
+
+                for (i, particle_i) in self.particles.iter().enumerate() {
+                    let pos = particle_i.pos.get();
+                    let grid_pos = (
+                        pos.x.div_euclid(CELL_SIZE) as i32,
+                        pos.y.div_euclid(CELL_SIZE) as i32,
+                    );
+                    process_cell(
+                        i,
+                        grid_pos,
+                        &hash_table,
+                        &start_offsets,
+                        &self.particles,
+                        hasher,
+                        |particle_j| {
+                            Self::update_pressure(particle_i, particle_j, &self.params);
+                        },
+                    );
+                }
+
                 self.sort_time_history.push_back(super::SortMapTime {
                     hash: hash_time,
                     find: find_time,
