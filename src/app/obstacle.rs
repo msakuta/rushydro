@@ -11,6 +11,7 @@ pub(crate) enum Environment {
     Capillary,
     Buoy,
     Convection,
+    TidalForce,
 }
 
 pub(super) struct Obstacle {
@@ -150,7 +151,7 @@ impl Obstacle {
             .distance(local_pos.to_vec2(), true)
             .map(|mut res| {
                 res.normal = self.transform.apply_vec(res.normal);
-                let velo = self.angular_velo * rotate90(local_pos.to_vec2());
+                let velo = self.angular_velo * local_pos.to_vec2().rot90();
                 res.velo = self.transform.apply_vec(velo);
                 res
             })
@@ -163,7 +164,7 @@ impl Obstacle {
             .distance(local_pos.to_vec2(), false)
             .map(|mut res| {
                 res.normal = self.transform.apply_vec(res.normal);
-                let velo = self.angular_velo * rotate90(local_pos.to_vec2());
+                let velo = self.angular_velo * local_pos.to_vec2().rot90();
                 res.velo = self.transform.apply_vec(velo);
                 res
             })
@@ -368,10 +369,6 @@ impl RectObstacle {
                 velo: Vec2::ZERO,
             })
     }
-}
-
-fn rotate90(v: Vec2) -> Vec2 {
-    Vec2 { x: v.y, y: -v.x }
 }
 
 fn cross(a: Vec2, b: Vec2) -> f32 {

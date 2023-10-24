@@ -9,6 +9,17 @@ use super::{
 };
 use crate::measure_time;
 
+pub(super) const EARTH_RADIUS: f32 = 5.;
+const EARTH_GRAVITY: f32 = 20.;
+pub(super) const MOON_RADIUS: f32 = 2.;
+pub(super) const MOON_ORBIT: f32 = 50.;
+const MOON_GRAVITY: f32 = 5.;
+
+pub(super) fn calc_moon_pos(time: f32) -> Vec2 {
+    let phase = time / 500.;
+    vec2(phase.cos(), phase.sin()) * MOON_ORBIT
+}
+
 pub(super) struct Particle {
     pub pos: Cell<Vec2>,
     pub velo: Cell<Vec2>,
@@ -288,10 +299,21 @@ impl RusHydroApp {
             }
         }
 
+        let moon_pos = calc_moon_pos(self.time);
+
         for particle in &mut self.particles {
             let pos = particle.pos.get();
             let mut velo = particle.velo.get();
-            velo.y -= self.gravity;
+            match self.obstacle_select {
+                Environment::TidalForce => {
+                    let pos_len = pos.length();
+                    velo -= pos / pos_len.powi(3) * self.gravity * EARTH_GRAVITY;
+                    let moon_delta = pos - moon_pos;
+                    let moon_dist = moon_delta.length();
+                    velo -= moon_delta / moon_dist.powi(3) * self.gravity * MOON_GRAVITY;
+                }
+                _ => velo.y -= self.gravity,
+            }
             let newpos = pos + velo;
             let mut croppos = pos2(
                 newpos.x.min(self.rect.max.x).max(self.rect.min.x),
@@ -305,6 +327,23 @@ impl RusHydroApp {
                         * (1. + self.restitution);
                     velo -= impulse;
                     obstacle.apply_impulse(impulse, newpos);
+                }
+            }
+            if matches!(self.obstacle_select, Environment::TidalForce) {
+                if croppos.to_vec2().length_sq() < EARTH_RADIUS.powi(2) {
+                    let normal = croppos.to_vec2().normalized();
+                    croppos = (normal * EARTH_RADIUS).to_pos2();
+                    velo -= velo.dot(normal) * normal;
+                    let tangent = normal.rot90();
+                    velo -= 0.1 * velo.dot(tangent) * tangent;
+                }
+                let moon_delta = (croppos - moon_pos).to_vec2();
+                if moon_delta.length_sq() < MOON_RADIUS.powi(2) {
+                    let normal = moon_delta.normalized();
+                    croppos = (normal * MOON_RADIUS + moon_pos).to_pos2();
+                    velo -= velo.dot(normal) * normal;
+                    let tangent = normal.rot90();
+                    velo -= 0.1 * velo.dot(tangent) * tangent;
                 }
             }
             if newpos.x < self.rect.min.x && velo.x < 0. {

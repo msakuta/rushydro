@@ -21,7 +21,7 @@ use rand::{thread_rng, Rng};
 use self::{
     fields::Fields,
     obstacle::{Environment, Obstacle},
-    particles::Particle,
+    particles::{calc_moon_pos, Particle, EARTH_RADIUS, MOON_RADIUS},
 };
 
 const SCALE: f32 = 10.;
@@ -95,6 +95,7 @@ pub struct RusHydroApp {
     restitution: f32,
     params: Params,
     gravity: f32,
+    time: f32,
     mouse_down: Option<(Pos2, Vec2)>,
     mouse_effect_radius: f32,
     neighbor_mode: NeighborMode,
@@ -151,6 +152,7 @@ impl RusHydroApp {
                 surface_tension_threshold: SURFACE_TENSION_THRESHOLD,
             },
             gravity: G,
+            time: 0.,
             mouse_down: None,
             mouse_effect_radius: MOUSE_EFFECT_RADIUS,
             neighbor_mode: NeighborMode::SortMap,
@@ -315,6 +317,21 @@ impl RusHydroApp {
                 }
             }
 
+            if matches!(self.obstacle_select, Environment::TidalForce) {
+                painter.circle(
+                    to_pos2(Pos2::ZERO),
+                    EARTH_RADIUS * SCALE,
+                    Color32::WHITE,
+                    (1., Color32::BLACK),
+                );
+                painter.circle(
+                    to_pos2(calc_moon_pos(self.time).to_pos2()),
+                    MOON_RADIUS * SCALE,
+                    Color32::WHITE,
+                    (1., Color32::BLACK),
+                );
+            }
+
             let scr_rect = trans_rect(&self.rect).expand(PARTICLE_RENDER_RADIUS);
             painter.rect_stroke(scr_rect, 0., (1., Color32::BLACK));
 
@@ -394,6 +411,13 @@ impl RusHydroApp {
                     &mut self.obstacle_select,
                     Environment::Convection,
                     "Convection",
+                )
+                .changed();
+            map_changed |= ui
+                .radio_value(
+                    &mut self.obstacle_select,
+                    Environment::TidalForce,
+                    "TidalForce",
                 )
                 .changed();
         });
@@ -557,6 +581,7 @@ impl eframe::App for RusHydroApp {
         if !self.paused {
             self.update_particles();
             self.update_obstacles(1.);
+            self.time += 1.;
         }
 
         egui::SidePanel::right("side_panel")
