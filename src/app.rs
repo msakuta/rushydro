@@ -127,13 +127,14 @@ impl RusHydroApp {
         let mut rng = thread_rng();
         let rect = Rect::from_center_size(Pos2::ZERO, Vec2::splat(30.));
         let particles = (0..NUM_PARTICLES)
-            .map(|_| Particle {
-                pos: Cell::new(vec2(
-                    rng.gen_range(rect.min.x..rect.max.x),
-                    rng.gen_range(rect.min.y..rect.max.y),
-                )),
-                velo: Cell::new(Vec2::ZERO),
-                temp: Cell::new(0.),
+            .map(|_| {
+                Particle::new(
+                    vec2(
+                        rng.gen_range(rect.min.x..rect.max.x),
+                        rng.gen_range(rect.min.y..rect.max.y),
+                    ),
+                    Vec2::ZERO,
+                )
             })
             .collect();
         let density_resolution = DENSITY_RESOLUTION;
@@ -362,10 +363,12 @@ impl RusHydroApp {
                         let temp_u8 = (particle.temp.get().min(1.) * 255.) as u8;
                         Color32::from_rgb(temp_u8, 0, 255 - temp_u8)
                     };
-                    painter.circle_filled(
-                        to_pos2(particle.pos.get().to_pos2()),
-                        PARTICLE_RENDER_RADIUS,
-                        color,
+                    let scr_pos = to_pos2(particle.pos.get().to_pos2());
+                    painter.circle_filled(scr_pos, PARTICLE_RENDER_RADIUS, color);
+                    painter.arrow(
+                        scr_pos,
+                        particle.force.get() * 100.,
+                        (2., Color32::from_rgb(255, 0, 255)).into(),
                     );
                 }
             }
@@ -419,6 +422,9 @@ impl RusHydroApp {
                     Environment::TidalForce,
                     "TidalForce",
                 )
+                .changed();
+            map_changed |= ui
+                .radio_value(&mut self.obstacle_select, Environment::Engine, "Engine")
                 .changed();
         });
         ui.label("Num particles (needs reset):");

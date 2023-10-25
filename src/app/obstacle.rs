@@ -1,6 +1,11 @@
+use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
+
 use eframe::epaint::{pos2, vec2, Pos2, Rect, Vec2};
 
 use super::{RusHydroApp, PARTICLE_RENDER_RADIUS, SCALE};
+
+const PISTON_THICKNESS: f32 = 8.;
+const PISTON_STROKE: f32 = 7.;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Environment {
@@ -12,6 +17,7 @@ pub(crate) enum Environment {
     Buoy,
     Convection,
     TidalForce,
+    Engine,
 }
 
 pub(super) struct Obstacle {
@@ -27,6 +33,7 @@ pub(super) struct Obstacle {
     sense_gravity: bool,
     hydrophilic: bool,
     constrain_rect: bool,
+    linkage: Option<(usize, Rc<RefCell<Linkage>>)>,
 }
 
 impl Default for Obstacle {
@@ -43,7 +50,24 @@ impl Default for Obstacle {
             sense_gravity: false,
             hydrophilic: false,
             constrain_rect: false,
+            linkage: None,
         }
+    }
+}
+
+#[derive(Debug)]
+struct Linkage {
+    phase: f32,
+    phase_velo: f32,
+}
+
+impl Linkage {
+    fn pos(&self, idx: usize) -> f32 {
+        (self.phase + idx as f32 * std::f32::consts::PI * 0.5).cos() * PISTON_STROKE
+    }
+
+    fn phase_derive(&self, idx: usize) -> f32 {
+        -(self.phase + idx as f32 * std::f32::consts::PI * 0.5).sin() * PISTON_STROKE
     }
 }
 
@@ -121,6 +145,13 @@ impl Obstacle {
         }
     }
 
+    fn with_combined_piston(self, idx: usize, v: Rc<RefCell<Linkage>>) -> Self {
+        Self {
+            linkage: Some((idx, v)),
+            ..self
+        }
+    }
+
     pub fn is_hydrophilic(&self) -> bool {
         self.hydrophilic
     }
@@ -171,6 +202,16 @@ impl Obstacle {
     }
 
     pub fn update(&mut self, rect: &Rect, gravity: f32, delta_time: f32) {
+        if let Some((idx, linkage)) = &self.linkage {
+            let mut linkage = RefCell::borrow_mut(linkage);
+            linkage.phase_velo +=
+                (-1f32).powi(*idx as i32) * linkage.phase_derive(*idx) * 2e-4 * delta_time;
+            linkage.phase_velo *= (-delta_time * 0.01).exp();
+            linkage.phase += linkage.phase_velo;
+            // println!("Idx {idx}, linkage: {linkage:?}");
+            self.transform.offset.x = linkage.pos(*idx);
+            return;
+        }
         if self.mass != 0. {
             if self.sense_gravity {
                 self.velo.y -= gravity * delta_time;
@@ -198,6 +239,13 @@ impl Obstacle {
     }
 
     pub(super) fn apply_impulse(&mut self, impulse: Vec2, pos: Vec2) {
+        if let Some((idx, linkage)) = &self.linkage {
+            let mut linkage = RefCell::borrow_mut(&linkage);
+            // let pos = linkage.phase.cos();
+            let velo = linkage.phase_derive(*idx);
+            linkage.phase_velo += velo * impulse.x / self.mass;
+            return;
+        }
         if self.mass != 0. {
             if self.pivot.is_none() {
                 self.velo += impulse / self.mass;
@@ -502,6 +550,34 @@ impl RusHydroApp {
                 .with_hydrophilic(false)
                 .with_constrain_rect(true)]
             }
+            Environment::Engine => {
+                let linkage = Rc::new(RefCell::new(Linkage {
+                    phase: 0.,
+                    phase_velo: 0.01,
+                }));
+                vec![
+                    Obstacle::new(RectObstacle::new(
+                        vec2(-rect.width(), 0.),
+                        0.,
+                        vec2(
+                            rect.width() * 0.5 + PISTON_THICKNESS,
+                            rect.height() / 2. + 2.,
+                        ),
+                        20000.,
+                    ))
+                    .with_combined_piston(0, linkage.clone()),
+                    Obstacle::new(RectObstacle::new(
+                        vec2(rect.width(), 0.),
+                        0.,
+                        vec2(
+                            rect.width() * 0.5 + PISTON_THICKNESS,
+                            rect.height() / 2. + 2.,
+                        ),
+                        20000.,
+                    ))
+                    .with_combined_piston(1, linkage),
+                ]
+            }
             _ => vec![],
         }
     }
@@ -510,5 +586,11 @@ impl RusHydroApp {
         for obstacle in &mut self.obstacles {
             obstacle.update(&self.rect, self.gravity, delta_time);
         }
+        // if matches!(self.obstacle_select, Environment::Engine) {
+        //     for (i, obstacle) in self.obstacles.iter_mut().enumerate() {
+        //         let pos = &mut obstacle.transform.offset;
+        //         pos.x = -PISTON_THICKNESS  + self.rect.width() / 8. * (-1. + (self.time * 0.1 + i as f32 * std::f32::consts::PI * 0.5).cos()) + (self.rect.width() / 2.) * i as f32;
+        //     }
+        // }
     }
 }
